@@ -1,0 +1,334 @@
+// Next.js + WebSocket game server with a lobby: players create rooms (map, max players)
+// or join one from the list. A room lives while someone is in it; its passages and holes live with it.
+import { createServer } from 'node:http';
+import { readdirSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import next from 'next';
+import { WebSocketServer } from 'ws';
+import { PENALTY_MS, touchesFlank } from './lib/bite.mjs';
+
+const dev = !process.argv.includes('--prod');
+const port = Number(process.env.PORT) || 3000;
+const MAX_POINTS = 3_000_000; // tunnel numbers per room
+const WIN_GROWTH = 3; // the size at the win: keep in sync with lib/worm/constants.ts
+const ROOM_IDLE_MS = 60_000; // an empty room closes after this
+const COLORS = [0xe89a9a, 0x9ad0e8, 0xb8e89a, 0xe8d49a, 0xc79ae8, 0xe8b07a, 0x9ae8cf, 0xf0f0f0];
+
+const app = next({ dev });
+const handle = app.getRequestHandler();
+await app.prepare();
+
+// ---------- names & maps ----------
+
+// same rule as lib/name.ts: letters, digits, space, _ . -
+function cleanText(s, max) {
+  const n = String(s ?? '').normalize('NFC').replace(/[^\p{L}\p{N} _.\-]/gu, '').replace(/\s{2,}/g, ' ').slice(0, max).trim();
+  return n.length >= 2 ? n : '';
+}
+const cleanName = (s) => cleanText(s, 16);
+
+/** Playable maps = fruit models in public/fruits. */
+function listFruits() {
+  try {
+    return readdirSync('public/fruits').filter((f) => f.endsWith('.glb') && !f.endsWith('-core.glb')).map((f) => f.slice(0, -4)).filter((n) => /^[a-z0-9_-]{1,32}$/.test(n));
+  } catch {
+    return [];
+  }
+}
+
+// ---------- rooms ----------
+
+/** @type {Map<string, any>} */
+const rooms = new Map();
+
+const WIN_OPTIONS = [300, 500, 1000]; // a room's goal in points (lib/worm/constants.ts)
+
+function createRoom({ name, fruit, max, win }) {
+  const fruits = listFruits();
+  let id;
+  do id = randomBytes(3).toString('hex');
+  while (rooms.has(id));
+  const room = {
+    id,
+    name: cleanText(name, 24) || `Комната ${id}`,
+    fruit: fruits.includes(fruit) ? fruit : fruits[0] || 'apple',
+    max: Math.min(8, Math.max(2, Math.round(Number(max)) || 4)),
+    win: WIN_OPTIONS.includes(Number(win)) ? Number(win) : WIN_OPTIONS[0],
+    clients: new Map(),
+    tunnels: new Map(),
+    holes: [],
+    seeds: new Array(SEED_COUNT).fill(false), // eaten?
+    totalPts: 0,
+    winUntil: 0,
+    host: null, // websocket of the client that simulates the ants
+    emptySince: Date.now(),
+  };
+  rooms.set(id, room);
+  console.log(`room ${id} "${room.name}" created (${room.fruit}, max ${room.max})`);
+  return room;
+}
+
+const roomInfo = (r) => ({ id: r.id, name: r.name, fruit: r.fruit, players: r.clients.size, max: r.max, win: r.win });
+
+setInterval(() => {
+  const now = Date.now();
+  for (const r of rooms.values()) {
+    if (!r.clients.size && now - r.emptySince > ROOM_IDLE_MS) {
+      rooms.delete(r.id);
+      console.log(`room ${r.id} closed`);
+    }
+  }
+}, 10_000);
+
+// the host went quiet (a background tab, a frozen browser): hand the ants to someone who's actually playing
+setInterval(() => {
+  const now = Date.now();
+  for (const r of rooms.values()) {
+    if (!r.host || now - (r.antsAt || 0) < 3000) continue;
+    const next = [...r.clients].find(([w, c]) => w !== r.host && !c.bot && now - c.updated < 2000);
+    if (!next) continue;
+    r.host = next[0];
+    r.antsAt = now; // give the new one time to start
+    console.log(`room ${r.id}: ants handed over to ${next[1].name}`);
+    broadcast(r, { t: 'host', id: next[1].id });
+  }
+}, 1000);
+
+const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+
+function broadcast(room, msg, except) {
+  const s = JSON.stringify(msg);
+  for (const ws of room.clients.keys()) if (ws !== except && ws.readyState === 1) ws.send(s);
+}
+
+const SEED_COUNT = 5; // keep in sync with lib/render/seeds.ts
+const SEED_BONUS_MS = 10_000; // ×2 speed; no second seed while it lasts
+
+const isNums = (a) => Array.isArray(a) && a.every((v) => typeof v === 'number' && Number.isFinite(v));
+
+wss.on('connection', (ws, req) => {
+  const params = new URL(req.url || '/ws', 'http://x').searchParams;
+  const name = cleanName(params.get('name')) || 'червяк';
+  const isBot = params.get('bot') === '1';
+  const room = rooms.get(params.get('room') || '');
+  if (!room) {
+    ws.send(JSON.stringify({ t: 'noroom' }));
+    ws.close();
+    return;
+  }
+  const roomName = room.id;
+  if (room.clients.size >= room.max) {
+    ws.send(JSON.stringify({ t: 'full' }));
+    ws.close();
+    return;
+  }
+  const used = new Set([...room.clients.values()].map((c) => c.color));
+  const color = COLORS.find((c) => !used.has(c)) ?? COLORS[0];
+  // random ids: tunnels are keyed by player id, so ids must not repeat within a room
+  let id;
+  do id = 'w' + randomBytes(5).toString('hex');
+  while ([...room.clients.values()].some((c) => c.id === id));
+  const me = { id, color, name, bot: isBot, state: null, frozenUntil: 0, contacts: new Set(), updated: 0 };
+  room.clients.set(ws, me);
+  // the first person in the room simulates the ants for everyone (bots never do)
+  const newHost = !room.host && !isBot;
+  if (newHost) {
+    room.host = ws;
+    room.antsAt = Date.now();
+  }
+  const { tunnels } = room;
+
+  ws.send(
+    JSON.stringify({
+      t: 'welcome',
+      id,
+      color,
+      room: roomInfo(room),
+      host: room.host ? room.clients.get(room.host)?.id ?? '' : '',
+      players: [...room.clients.values()].filter((c) => c !== me).map(({ id, color, name }) => ({ id, color, name })),
+      tunnels: [...tunnels].map(([tid, t]) => ({ id: tid, pts: t.pts, r: t.r })),
+      holes: room.holes,
+      seeds: room.seeds,
+    }),
+  );
+  broadcast(room, { t: 'join', id, color, name }, ws);
+  if (newHost) broadcast(room, { t: 'host', id }, ws);
+  console.log(`[${roomName}] ${name} joined (${room.clients.size}/${room.max})`);
+
+  ws.on('message', (raw) => {
+    let m;
+    try {
+      m = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+    const now = Date.now();
+    if (now < me.frozenUntil && ['s', 'ts', 'tp', 'h'].includes(m.t)) return;
+    switch (m.t) {
+      case 's': // worm state, relayed as is (~15/s)
+        if (isNums(m.p) && m.p.length === 30) {
+          const g = typeof m.g === 'number' && Number.isFinite(m.g) ? Math.min(3, Math.max(1, m.g)) : 1;
+          const w = typeof m.w === 'number' && Number.isFinite(m.w) ? Math.min(20, Math.max(-1, m.w)) : -1;
+          const mode = m.m === 'dig' || m.m === 'fly' ? m.m : 'surface';
+          const fx = typeof m.fx === 'number' && Number.isFinite(m.fx) ? Math.min(10, Math.max(-1, m.fx)) : -1;
+          const state = { t: 's', id, p: m.p, m: mode, g, w, fx, k: m.k ? 1 : 0 }; // k: stuck in a web
+          const previous = me.state;
+          me.state = state;
+          me.updated = now;
+          broadcast(room, state, ws);
+          const moving = previous && Math.hypot(...state.p.slice(27).map((v, i) => v - previous.p[27 + i])) > 0.0005;
+          for (const victim of room.clients.values()) {
+            if (victim === me || !victim.state || now - victim.updated > 2000) continue;
+            const touching = touchesFlank(state, victim.state);
+            if (!touching) { me.contacts.delete(victim.id); continue; }
+            if (moving && !me.contacts.has(victim.id) && now >= victim.frozenUntil) {
+              victim.frozenUntil = now + PENALTY_MS;
+              broadcast(room, { t: 'bite', id: victim.id, by: id, duration: PENALTY_MS });
+            }
+            me.contacts.add(victim.id);
+          }
+        }
+        break;
+      case 'ts': // tunnel start
+        if (typeof m.id === 'string' && m.id.startsWith(id + '-') && !tunnels.has(m.id)) {
+          const r = typeof m.r === 'number' && Number.isFinite(m.r) ? Math.min(0.5, Math.max(0.03, m.r)) : 0.075;
+          tunnels.set(m.id, { owner: id, pts: [], r });
+          broadcast(room, { t: 'ts', id: m.id, r }, ws);
+        }
+        break;
+      case 'tp': {
+        // tunnel points
+        const t = tunnels.get(m.id);
+        if (!t || t.owner !== id || !isNums(m.pts) || m.pts.length % 3) break;
+        if (room.totalPts + m.pts.length > MAX_POINTS) break;
+        t.pts.push(...m.pts);
+        room.totalPts += m.pts.length;
+        broadcast(room, { t: 'tp', id: m.id, pts: m.pts }, ws);
+        break;
+      }
+      case 'reset': // restart the round for everyone: passages, holes and points wiped, seeds back
+        room.tunnels.clear();
+        room.holes = [];
+        room.totalPts = 0;
+        room.winUntil = 0;
+        room.seeds.fill(false);
+        for (const c of room.clients.values()) c.seedUntil = 0;
+        // everyone's starting place: evenly around the fruit, in this order, turned at random
+        broadcast(room, { t: 'reset', by: name, order: [...room.clients.values()].map((c) => c.id), rot: Math.random() * Math.PI * 2 });
+        console.log(`[${roomName}] ${name} restarted the round`);
+        break;
+      case 'ants': // the host's ant snapshot
+        if (ws === room.host && Array.isArray(m.a) && m.a.length <= 50) {
+          room.antsAt = now;
+          const w = Array.isArray(m.w) && m.w.length <= 8 ? m.w : undefined; // spider threads, now and then
+          broadcast(room, { t: 'ants', a: m.a, w }, ws);
+        }
+        break;
+      case 'sting': // the host: a spider bit a worm stuck in its web → it runs amok for a while
+        if (ws === room.host && typeof m.id === 'string') broadcast(room, { t: 'sting', id: m.id, k: Number.isInteger(m.k) ? Math.min(9, Math.max(0, m.k)) : 5, duration: 5000 });
+        break;
+      case 'shake': // someone shakes ants off / lashes a ladybug: the host decides
+      case 'swat': // someone shoos critters with the tail
+      case 'free': // someone starts the next round: critters let go of it
+        if (room.host && room.host !== ws && room.host.readyState === 1) room.host.send(JSON.stringify({ t: m.t, id }));
+        break;
+      case 'seed': {
+        // eaten by whoever gets there first, gone until the next round; never two in a row
+        const i = m.i;
+        if (!Number.isInteger(i) || i < 0 || i >= SEED_COUNT || room.seeds[i]) break;
+        if (now < (me.seedUntil || 0)) break;
+        room.seeds[i] = true;
+        me.seedUntil = now + SEED_BONUS_MS;
+        broadcast(room, { t: 'seed', i, by: id });
+        break;
+      }
+      case 'win': // first to grow to WIN_GROWTH (the room goal in points) wins the round; everyone starts small again
+        // the claim carries its size (the last state may be a frame older)
+        if (now >= (room.winUntil || 0) && Math.max(me.state?.g ?? 1, Number(m.g) || 1) >= WIN_GROWTH - 0.01) {
+          room.winUntil = now + 6000;
+          // a new round on a fresh fruit: no passages or holes, all seeds back
+          room.tunnels.clear();
+          room.holes = [];
+          room.totalPts = 0;
+          room.seeds.fill(false);
+          broadcast(room, { t: 'seeds', eaten: room.seeds });
+          broadcast(room, { t: 'win', id, name });
+          console.log(`[${roomName}] ${name} won`);
+        }
+        break;
+      case 'h': // hole in the skin
+        if (isNums(m.h) && (m.h.length === 6 || m.h.length === 7) && room.holes.length < 20000) {
+          room.holes.push(m.h);
+          broadcast(room, { t: 'h', h: m.h }, ws);
+        }
+        break;
+    }
+  });
+
+  ws.on('close', () => {
+    room.clients.delete(ws);
+    if (room.host === ws) {
+      // hand the ants over to the next person
+      const next = [...room.clients].find(([, c]) => !c.bot);
+      room.host = next ? next[0] : null;
+      room.antsAt = Date.now();
+      broadcast(room, { t: 'host', id: next ? next[1].id : '' });
+    }
+    if (!room.clients.size) room.emptySince = Date.now();
+    broadcast(room, { t: 'leave', id });
+    console.log(`[${roomName}] ${name} left`);
+  });
+});
+
+// ---------- lobby API ----------
+
+function json(res, code, data) {
+  res.writeHead(code, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+function api(req, res) {
+  if (req.url === '/api/fruits' && req.method === 'GET') return json(res, 200, listFruits());
+  if (req.url === '/api/rooms' && req.method === 'GET') {
+    return json(res, 200, [...rooms.values()].map(roomInfo).sort((a, b) => b.players - a.players));
+  }
+  if (req.url === '/api/rooms' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => {
+      body += c;
+      if (body.length > 2000) req.destroy();
+    });
+    req.on('end', () => {
+      let o = {};
+      try {
+        o = JSON.parse(body);
+      } catch {}
+      if (rooms.size >= 200) return json(res, 503, { error: 'too many rooms' });
+      json(res, 200, roomInfo(createRoom(o)));
+    });
+    return;
+  }
+  handle(req, res);
+}
+
+const server = createServer(api);
+const nextUpgrade = app.getUpgradeHandler();
+server.on('upgrade', (req, socket, head) => {
+  if (req.url && req.url.startsWith('/ws')) {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } else {
+    nextUpgrade(req, socket, head);
+  }
+});
+
+server.listen(port, '0.0.0.0', () => {
+  console.log(`\n  Worm-in-apple ready (${dev ? 'dev' : 'prod'})`);
+  console.log(`  local:   http://localhost:${port}`);
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family === 'IPv4' && !a.internal) console.log(`  network: http://${a.address}:${port}`);
+    }
+  }
+  console.log('');
+});

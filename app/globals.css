@@ -1,0 +1,66 @@
+html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+
+/* ---------- theme tokens ---------- */
+:root,
+[data-theme='dark'] {
+  --ui-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ui-fg: #f3ead2;
+  --ui-fg-muted: rgba(243, 234, 210, 0.66);
+  --ui-panel: rgba(16, 13, 9, 0.62);
+  --ui-surface: #1d1a15;
+  --ui-surface-2: #2a251d;
+  --ui-border: #4a4234;
+  --ui-accent: #f7a50c; /* juicy amber */
+  --ui-accent-hover: #ffb92e;
+  --ui-accent-fg: #2b1a05;
+  --ui-overlay: rgba(0, 0, 0, 0.5);
+  --ui-kbd-bg: rgba(255, 255, 255, 0.1);
+  --ui-kbd-border: rgba(255, 255, 255, 0.22);
+  --ui-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --ui-radius: 10px;
+  --ui-focus: #f0b85a;
+}
+
+[data-theme='light'] {
+  --ui-fg: #2b2117;
+  --ui-fg-muted: rgba(43, 33, 23, 0.62);
+  --ui-panel: rgba(255, 251, 240, 0.78);
+  --ui-surface: #fffaf0;
+  --ui-surface-2: #f1e8d6;
+  --ui-border: #d8cbb1;
+  --ui-accent: #f29c00; /* juicy amber */
+  --ui-accent-hover: #dd8e00;
+  --ui-accent-fg: #2b1a05;
+  --ui-overlay: rgba(40, 30, 15, 0.35);
+  --ui-kbd-bg: rgba(0, 0, 0, 0.05);
+  --ui-kbd-border: rgba(0, 0, 0, 0.18);
+  --ui-shadow: 0 12px 40px rgba(60, 40, 10, 0.25);
+  --ui-focus: #f29c00;
+}
+
+body { font-family: var(--ui-font); color: var(--ui-fg); }
+
+/* Lobby key art. Wider than 16:9 crops the bottom and keeps the logo;
+   taller viewports fit the poster to the width so "CHOMPERFLY" is not cut off. */
+.lobbyBg {
+  position: absolute;
+  inset: 0;
+  background-color: #5b9fd4;
+  background-image: url(/chomperfly.jpg);
+  background-repeat: no-repeat;
+  background-position: center top;
+  background-size: cover;
+}
+.lobbySheet {
+  width: min(760px, 100%);
+  margin: auto auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+@media (max-aspect-ratio: 3/2) {
+  .lobbyBg { background-size: 100% auto; }
+}
+@media (max-width: 800px) {
+  .lobbySheet { margin-top: 32vh; }
+}
