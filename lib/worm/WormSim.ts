@@ -11,7 +11,6 @@ export type SimInput = {
   turn: number; // radians this frame, + = left
   pitch: number; // radians this frame, + = up (inside only)
   forward: boolean;
-  boost: boolean;
   speed?: number; // extra speed factor (a seed bonus), 1 = normal
   rear: boolean; // stand up on the tail (on the skin only)
 };
@@ -32,6 +31,7 @@ const FLY_END = 4.4;
 const SHAKE_TIME = 0.28;
 const WHIP_TIME = 0.45; // long enough to see the swing
 const SWIPE_TIME = 0.3;
+const RUN = 2; // the worm's pace: what used to be the Shift boost
 const JUMP_TIME = 0.55;
 const JUMP_DIST = 1.5; // body lengths forward
 const JUMP_H = 0.55; // body lengths up
@@ -302,7 +302,7 @@ export class WormSim {
       this.updateFlight(dt);
       return;
     }
-    const boost = (inp.boost ? 2 : 1) * (inp.speed ?? 1);
+    const boost = RUN * (inp.speed ?? 1); // always at a run (no separate boost)
     this.rear += ((this.mode === 'surface' && inp.rear ? 1 : 0) - this.rear) * damp(dt, 5);
     if (this.mode === 'surface') this.updateSurface(dt, inp.turn, inp.forward && this.rear < 0.05, boost);
     else this.updateDig(dt, inp.turn, inp.pitch, inp.forward, boost);
@@ -320,7 +320,7 @@ export class WormSim {
   // ---------- skin ----------
 
   private updateSurface(dt: number, turn: number, forward: boolean, boost: number) {
-    const { f, n, trail, L, LC } = this;
+    const { f, n, trail, L } = this;
     f.applyAxisAngle(n, turn).normalize();
     if (this.jumpT > 0) {
       // in the air: carried forward, body straight
@@ -331,8 +331,28 @@ export class WormSim {
     }
     // crawl only while moving forward; otherwise freeze mid-step and resume from the same phase
     if (!forward) return;
-    this.phase += (dt / CYCLE) * boost;
-    if (this.phase >= 1) this.phase -= 1;
+    // fast (boost, seeds, panic): several small sub-steps, so no part of a step is skipped
+    let left = (dt / CYCLE) * boost;
+    while (left > 1e-6) {
+      const d = Math.min(left, 0.04);
+      left -= d;
+      this.crawlPhase(d);
+    }
+  }
+
+  /** Advance the inchworm cycle by `d` (a fraction of a step). */
+  private crawlPhase(d: number) {
+    const { trail, L, LC } = this;
+    const before = this.phase;
+    this.phase += d;
+    if (this.phase >= 1) {
+      // finish the stretch of this step before starting the next one
+      if (before < 1) {
+        const move = this.tailDist + L - trail.head;
+        if (move > 0) this.stepSurface(move);
+      }
+      this.phase -= 1;
+    }
     const half = (1 - STRAIGHT_HOLD) / 2;
     if (this.phase < STRAIGHT_HOLD) {
       this.tailDist = trail.head - L; // lie stretched out for a moment
@@ -394,7 +414,8 @@ export class WormSim {
       }
     }
     this.trail.push(rec, u);
-    if ((this.entered && F > 0 && this.sinceEntry > 0.3) || (!this.entered && F > 0.4)) {
+    // out again; before getting in, only if it wandered off well above where it started (it starts a body-thickness up)
+    if ((this.entered && F > 0 && this.sinceEntry > 0.3) || (!this.entered && F > this.SEG_R + 0.4)) {
       if (this.entered) this.emitHole();
       this.events.tunnelEnd?.();
       this.toSurface();

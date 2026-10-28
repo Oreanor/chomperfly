@@ -1,7 +1,10 @@
+import type { ClientMsg } from './protocol';
+
+// what the server sends: many kinds, read field by field (and checked) where they're handled
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type NetMsg = any;
 
-export type Net = { send(m: object): void; close(): void };
+export type Net = { send(m: ClientMsg): void; close(): void };
 
 export type NetStatus = 'connecting' | 'online' | 'offline';
 

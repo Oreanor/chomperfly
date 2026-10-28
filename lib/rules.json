@@ -1,0 +1,9 @@
+{
+  "_about": "Game rules shared by the game (lib/worm/constants.ts) and the server (server.mjs, lib/bite.mjs): change them here only. winOptions: a room's goal in points; winSizeGain: by the win a worm is 1 + this times its starting size; seedBonusMs: how long one eaten seed speeds you up; penaltyMs: a bite's stun; radii: the worm's balls (tail → head) at growth 1.",
+  "winOptions": [300, 500, 1000],
+  "winDefault": 300,
+  "winSizeGain": 2,
+  "seedBonusMs": 10000,
+  "penaltyMs": 5000,
+  "radii": [0.072, 0.092, 0.108, 0.12, 0.128, 0.132, 0.13, 0.124, 0.116, 0.112]
+}

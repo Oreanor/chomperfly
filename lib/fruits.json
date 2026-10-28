@@ -1,0 +1,7 @@
+{
+  "_about": "What each fruit has inside. Read by the game (lib/fruits.ts) and by the server (server.mjs). A fruit is playable when it is listed here and /public/fruits/<name>.glb exists; its sky is /public/sky/<name>.jpg (else the apple orchard). flesh: colour of the flesh (#rrggbb; white if missing). seeds: bonus seeds to eat — kind 'star' (dark seeds in a star round the core) or 'arils' (a pomegranate's grains between pale membranes), count, add = speed added per seed (1 = +100% of the starting speed), for 10 s each. pit: a model in /public/fruits that is an obstacle in the middle (no seeds then). upsideDown: the model was made stem-down; turn it over so it hangs stem up.",
+  "apple": { "seeds": { "kind": "star", "count": 5, "add": 1 } },
+  "pear": { "seeds": { "kind": "star", "count": 5, "add": 1 } },
+  "peach": { "flesh": "#ffbe55", "pit": "peach-core.glb" },
+  "pomegranate": { "upsideDown": true, "flesh": "#ff7a9c", "seeds": { "kind": "arils", "count": 500, "add": 0.1 } }
+}

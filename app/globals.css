@@ -40,27 +40,20 @@ html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hi
 
 body { font-family: var(--ui-font); color: var(--ui-fg); }
 
-/* Lobby key art. Wider than 16:9 crops the bottom and keeps the logo;
-   taller viewports fit the poster to the width so "CHOMPERFLY" is not cut off. */
+/* Lobby key art (4:3): fills the screen, a wider one (16:9) crops it evenly at the top and the bottom. */
 .lobbyBg {
   position: absolute;
   inset: 0;
   background-color: #5b9fd4;
-  background-image: url(/chomperfly.jpg);
+  background-image: url(/chomperfly-orchard.jpg);
   background-repeat: no-repeat;
-  background-position: center top;
+  background-position: center center;
   background-size: cover;
 }
 .lobbySheet {
   width: min(760px, 100%);
-  margin: auto auto 0;
+  margin: auto auto calc(12vh - 40px); /* a bit below the middle of the screen, under the logo */
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-@media (max-aspect-ratio: 3/2) {
-  .lobbyBg { background-size: 100% auto; }
-}
-@media (max-width: 800px) {
-  .lobbySheet { margin-top: 32vh; }
 }

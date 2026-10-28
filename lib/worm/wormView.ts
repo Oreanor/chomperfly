@@ -164,12 +164,12 @@ export function placeLabel(v: WormView, head: THREE.Vector3, up: THREE.Vector3, 
 // ---------- pose ----------
 
 /** Swallowing wave: wave = position in balls counted from the head (-1 = no wave). */
-export function pulseAt(k: number, wave: number): number {
+export function pulseAt(k: number, wave: number, amp = 1): number {
   if (wave < 0) return 1;
   const local = wave - (N - 1 - k);
   if (local <= 0 || local >= PULSE_WIDTH) return 1;
   // soft in, soft out (zero speed at both ends)
-  return 1 + PULSE_AMP * (0.5 - 0.5 * Math.cos((2 * Math.PI * local) / PULSE_WIDTH));
+  return 1 + PULSE_AMP * amp * (0.5 - 0.5 * Math.cos((2 * Math.PI * local) / PULSE_WIDTH));
 }
 
 const mtx = new THREE.Matrix4();
@@ -212,7 +212,8 @@ function poseVictory(v: WormView, fx: number) {
 }
 
 /** Places the balls along pos[]; ups[] are their "up" directions (null → away from the fruit center). */
-export function poseWorm(v: WormView, pos: THREE.Vector3[], ups: THREE.Vector3[] | null, size = 1, wave = -1, fx = -1) {
+/** gulp: how big the swallowing wave swells (1 = normal; a panicking worm gulps huge chunks). */
+export function poseWorm(v: WormView, pos: THREE.Vector3[], ups: THREE.Vector3[] | null, size = 1, wave = -1, fx = -1, gulp = 1) {
   poseVictory(v, fx);
   for (let k = 0; k < N; k++) {
     const m = v.segs[k];
@@ -224,6 +225,6 @@ export function poseWorm(v: WormView, pos: THREE.Vector3[], ups: THREE.Vector3[]
     }
     m.position.copy(pos[k]);
     // round balls overlap along the body
-    m.scale.setScalar(RADII[k] * girth(size) * pulseAt(k, wave));
+    m.scale.setScalar(RADII[k] * girth(size) * pulseAt(k, wave, gulp));
   }
 }

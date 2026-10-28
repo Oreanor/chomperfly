@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dot, IconButton, Modal, Panel, Toast } from '@/components/ui';
+import { BinIcon, Button, Dot, IconButton, Modal, Panel, Toast } from '@/components/ui';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { useFruitLabel } from '@/components/Lobby';
 import Countdown from '@/components/Countdown';
@@ -67,8 +67,8 @@ export default function GameUI({ hud, room, onSettings, onRestartRound, confirmR
                 +🤖
               </Button>
             </div>
-            {/* columns: dot · name · points · where · remove-bot; rows share them via subgrid */}
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: '10px auto auto auto 26px', columnGap: 10, rowGap: 6 }}>
+            {/* columns: dot · name · where · points · remove-bot; rows share them via subgrid */}
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: '10px 11ch 15ch 4ch 26px', columnGap: 12, rowGap: 6 }}>
               {roster.map((p, i) => (
                 <li
                   key={i}
@@ -77,25 +77,30 @@ export default function GameUI({ hud, room, onSettings, onRestartRound, confirmR
                   onMouseLeave={() => setHoverBot((h) => (h === p.id ? '' : h))}
                 >
                   <Dot color={hex(p.color)} />
-                  <span style={{ fontWeight: p.me ? 700 : 400 }}>{p.name}</span>
-                  <span style={{ fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{t('score.points', { n: p.score })}</span>
+                  <span style={{ fontWeight: p.me ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.name}>
+                    {p.name}
+                  </span>
                   {p.panic || p.stunned ? (
-                    <span style={{ color: '#ff5a4a', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={{ color: '#ff5a4a', fontWeight: 700, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                       {t(p.panic ? 'where.panic' : 'where.stunned')} · {p.panic || p.stunned} {t('seconds')}
                     </span>
                   ) : (
-                    <span style={{ color: 'var(--ui-fg-muted)' }}>{t(p.mode === 'dig' ? 'where.dig' : 'where.surface')}</span>
+                    <span style={{ color: 'var(--ui-fg-muted)', whiteSpace: 'nowrap', overflow: 'hidden' }}>{t(p.mode === 'dig' ? 'where.dig' : 'where.surface')}</span>
                   )}
-                  {p.myBot && (
+                  <span style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{p.score}</span>
+                  {/* your bots: an outlined bin, faint until you point at the row */}
+                  {p.myBot ? (
                     <Button
                       size="sm"
                       variant="ghost"
                       title={t('bot.removeOne', { name: p.name })}
                       onClick={() => onRemoveBot(p.id)}
-                      style={{ padding: '0 6px', visibility: hoverBot === p.id ? 'visible' : 'hidden' }}
+                      style={{ padding: '0 4px', opacity: hoverBot === p.id ? 1 : 0.35, transition: 'opacity 0.15s' }}
                     >
-                      🗑
+                      <BinIcon />
                     </Button>
+                  ) : (
+                    <span />
                   )}
                 </li>
               ))}
@@ -149,9 +154,9 @@ export default function GameUI({ hud, room, onSettings, onRestartRound, confirmR
         </Toast>
       )}
 
-      {hud.seedBoost > 0 && (
+      {hud.seedMul > 1 && (
         <Toast style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', fontVariantNumeric: 'tabular-nums' }}>
-          🌰 {t('seed.boost')} · {hud.seedBoost} {t('seconds')}
+          🌰 {t('seed.boost', { x: hud.seedMul })} · {hud.seedBoost} {t('seconds')}
         </Toast>
       )}
 

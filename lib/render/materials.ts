@@ -7,13 +7,12 @@ export type FruitUniforms = {
   uWorm: THREE.IUniform<THREE.Vector3>; // worm head: the skin around it is cut away when inside
   uCut: THREE.IUniform<number>;
   uCutR: THREE.IUniform<number>;
-  uXray: THREE.IUniform<number>; // see-through skin
+  uXray: THREE.IUniform<number>; // see-through skin (near side), on whenever inside
+  uXrayKey: THREE.IUniform<number>; // the X key: the far side too (otherwise it hides the world while inside)
   uInside: THREE.IUniform<number>; // milkier flesh while the worm is inside
   uFlesh: THREE.IUniform<THREE.Color>; // the flesh colour of this fruit
 };
 
-/** Flesh colour per fruit (white unless listed). */
-export const FLESH_COLORS: Record<string, number> = { peach: 0xffbe55 };
 
 export function makeFruitUniforms(): FruitUniforms {
   return {
@@ -21,6 +20,7 @@ export function makeFruitUniforms(): FruitUniforms {
     uCut: { value: 0 },
     uCutR: { value: 0.75 },
     uXray: { value: 0 },
+    uXrayKey: { value: 0 },
     uInside: { value: 0 },
     uFlesh: { value: new THREE.Color(0.97, 0.95, 0.86) },
   };
@@ -32,6 +32,7 @@ varying vec3 vOPos;
 uniform vec3 uWorm;
 uniform float uCut;
 uniform float uXray;
+uniform float uXrayKey;
 uniform float uInside;
 uniform float uCutR;
 uniform vec3 uFlesh;
@@ -53,8 +54,15 @@ bool isOuterSide(){
 `;
 
 /** Skin outside (model texture or a procedural apple), white flesh inside, cut-away and x-ray. */
-export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | null) {
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0, side: THREE.DoubleSide, transparent: true, map });
+/**
+ * backdrop: an opaque copy drawn first that keeps only the far wall's flesh (beyond the worm) while
+ * gnawing inside: the near skin goes see-through, the far one hides the world. Off with the X-ray key.
+ */
+export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | null, backdrop = false) {
+  const mat = backdrop
+    ? new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0, side: THREE.BackSide, map })
+    : new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0, side: THREE.DoubleSide, transparent: true, map });
+  if (backdrop) mat.defines = { FRUIT_BACKDROP: '' };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
@@ -101,12 +109,59 @@ export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | 
         float rr = length(vWPos - cp);
         float hole = (1.0 - smoothstep(uCutR*0.55, uCutR, rr)) * (1.0 - smoothstep(0.85, 1.0, tt));
         float a = 1.0 - uCut*hole;
+        // the near wall (seen from outside) goes see-through; the far wall (its flesh side) stays
+        // and hides the world, unless it's the X-ray key
         a = min(a, mix(1.0, isOuterSide() ? mix(0.22, 0.32, uInside) : mix(0.0, 0.45, uInside), uXray));
+        #ifdef FRUIT_BACKDROP
+          // only the flesh of the far wall, beyond the worm, only while inside without the X-ray key
+          if (uXray * (1.0 - uXrayKey) < 0.5 || isOuterSide() || tt < 0.9) discard;
+          a = 1.0;
+        #endif
         if (a < 0.02) discard;
         gl_FragColor.a *= a;`,
       );
   };
   return mat;
+}
+
+/**
+ * The same see-through cut round the line from the camera to the worm, for things inside the fruit
+ * (a pomegranate's membranes and arils): they don't wall off the view of the worm.
+ */
+export function addCutaway(mat: THREE.Material, uniforms: FruitUniforms) {
+  mat.transparent = true; // to fade
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    prev?.call(mat, sh, r);
+    sh.uniforms.uWorm = uniforms.uWorm;
+    sh.uniforms.uCut = uniforms.uCut;
+    sh.uniforms.uCutR = uniforms.uCutR;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vCutPos;')
+      .replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+        vec4 cutP = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          cutP = instanceMatrix * cutP;
+        #endif
+        vCutPos = (modelMatrix * cutP).xyz;`,
+      );
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vCutPos;\nuniform vec3 uWorm;\nuniform float uCut;\nuniform float uCutR;')
+      .replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+        vec3 cab = uWorm - cameraPosition;
+        float ct = dot(vCutPos - cameraPosition, cab) / max(dot(cab, cab), 1e-5);
+        float cr = length(vCutPos - (cameraPosition + cab*clamp(ct, 0.0, 1.0)));
+        // only what would cover the worm itself: a narrow beam from the camera to just short of it
+        float cut = uCut * (1.0 - smoothstep(uCutR*0.35, uCutR*0.75, cr)) * (1.0 - smoothstep(0.75, 0.92, ct));
+        // fades to a ghost of itself, not away: you still see what's there
+        gl_FragColor.a *= 1.0 - 0.75 * cut;`,
+      );
+  };
+  mat.needsUpdate = true;
 }
 
 // ---------- tunnels: glass pipes ----------

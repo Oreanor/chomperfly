@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { loadAppleModel, loadPitModel } from '@/lib/appleModel';
+import { fruitSpec } from '@/lib/fruits';
 import { startEngine, type Engine, type HudState, type RoomInfo } from '@/lib/game/engine';
 import { cleanName } from '@/lib/name';
 import GameUI from '@/components/GameUI';
@@ -12,7 +13,7 @@ import KeysDialog from '@/components/KeysDialog';
 const NAME_KEY = 'wormName';
 const KEYS_SEEN_KEY = 'wormKeysSeen'; // the controls panel opens by itself the first time
 
-const initialHud = (): HudState => ({ players: 1, net: 'connecting', roster: '[]', toast: '', fps: 0, seedBoost: 0, countdown: 0, ants: 0, grip: '', web: 0, winner: '', winnerMe: false });
+const initialHud = (): HudState => ({ players: 1, net: 'connecting', roster: '[]', toast: '', fps: 0, seedBoost: 0, seedMul: 1, countdown: 0, ants: 0, grip: '', web: 0, winner: '', winnerMe: false });
 
 /** React shell: name prompt → lobby (pick or create a room) → the 3D game with its HUD. */
 export default function Game() {
@@ -60,6 +61,18 @@ export default function Game() {
     return () => window.removeEventListener('keydown', onKey);
   }, [needName, settingsOpen, confirmLeave, confirmRestart, hud.winner]);
 
+  // R asks to restart the round for everyone (the same as the ⟳ button)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyR' || e.repeat || e.target instanceof HTMLInputElement || !room) return;
+      if (needName || settingsOpen || keysOpen || confirmLeave || confirmRestart || hud.winner) return;
+      e.preventDefault();
+      setConfirmRestart(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [room, needName, settingsOpen, keysOpen, confirmLeave, confirmRestart, hud.winner]);
+
   useEffect(() => {
     if (!notice) return;
     const id = setTimeout(() => setNotice(''), 3500);
@@ -94,14 +107,15 @@ export default function Game() {
   useEffect(() => {
     if (!name || !room) return;
     let cancelled = false;
-    loadAppleModel(`/fruits/${room.fruit}.glb`)
+    loadAppleModel(`/fruits/${room.fruit}.glb`, fruitSpec(room.fruit).upsideDown)
       .catch((e) => {
         console.warn(`${room.fruit}.glb not loaded, using the built-in shape`, e);
         return null;
       })
       .then(async (model) => {
-        // a fruit with a pit (<fruit>-core.glb) has it as an obstacle instead of seeds
-        const pit = model ? await loadPitModel(`/fruits/${room.fruit}-core.glb`, model.geometry).catch(() => null) : null;
+        // a fruit with a pit (lib/fruits.json) has it as an obstacle instead of seeds
+        const pitFile = fruitSpec(room.fruit).pit;
+        const pit = model && pitFile ? await loadPitModel(`/fruits/${pitFile}`, model.geometry).catch(() => null) : null;
         if (cancelled || !mountRef.current) return;
         engineRef.current = startEngine({
           mount: mountRef.current,

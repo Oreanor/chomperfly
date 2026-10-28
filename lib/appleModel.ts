@@ -21,7 +21,7 @@ const MW = 384; // smooth enough at any zoom, half the triangles of 512×256
 const MH = 192;
 // smoothing: bumps smaller than ~this many cells are removed (cell ≈ 0.026 units at R0 = 8.3)
 const BLUR_CELLS = 8;
-const STEM_MARGIN = 0.12; // original triangles this far outside the smooth surface are the stem
+const STEM_MARGIN = 0.2; // original triangles this far outside the smooth surface are the stem
 
 /** Copy an attribute into plain floats (the GLB packs normals/uvs into small ints). */
 function toFloat(attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) {
@@ -32,7 +32,8 @@ function toFloat(attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute)
   return new THREE.BufferAttribute(out, attr.itemSize);
 }
 
-export async function loadAppleModel(url: string): Promise<AppleModel> {
+/** upsideDown: the model is made stem-down (turn it over so the stem is on top, as it hangs). */
+export async function loadAppleModel(url: string, upsideDown = false): Promise<AppleModel> {
   const gltf = await new GLTFLoader().loadAsync(url);
   gltf.scene.updateMatrixWorld(true);
   const geos: THREE.BufferGeometry[] = [];
@@ -55,6 +56,7 @@ export async function loadAppleModel(url: string): Promise<AppleModel> {
   if (!geos.length) throw new Error('fruit model has no mesh');
   const src = geos.length === 1 ? geos[0] : mergeGeometries(geos)!;
   if (!src.getAttribute('normal')) src.computeVertexNormals();
+  if (upsideDown) src.rotateX(Math.PI); // stem up
 
   // Center, then scale so the widest horizontal slice is R0.
   // An apple's widest slice is its equator. A pear's mid-height is the neck,
@@ -114,6 +116,11 @@ function castGrid(geometry: THREE.BufferGeometry, map: THREE.Texture | null) {
   const hitTri = new Int32Array(TW * TH).fill(-1);
   const hitU = new Float32Array(TW * TH);
   const hitV = new Float32Array(TW * TH);
+  // also the farthest hit: a model with insides (a pomegranate's arils, an inner wall) has its skin last
+  const far = new Float32Array(TW * TH).fill(-Infinity);
+  const farTri = new Int32Array(TW * TH).fill(-1);
+  const farU = new Float32Array(TW * TH);
+  const farV = new Float32Array(TW * TH);
 
   const dx = new Float32Array(TW * TH);
   const dy = new Float32Array(TW * TH);
@@ -184,7 +191,40 @@ function castGrid(geometry: THREE.BufferGeometry, map: THREE.Texture | null) {
           hitU[k] = u;
           hitV[k] = v;
         }
+        if (dist > 0 && dist > far[k]) {
+          far[k] = dist;
+          farTri[k] = t;
+          farU[k] = u;
+          farV[k] = v;
+        }
       }
+    }
+  }
+
+  // the skin is the farthest hit, except where something sticks out of it (a stem): there the
+  // farthest hit is well beyond its neighbourhood, and the nearest one is the skin
+  const W = 4;
+  const win: number[] = [];
+  for (let j = 0; j < TH; j++) {
+    for (let i = 0; i < TW; i++) {
+      const k = j * TW + i;
+      if (farTri[k] < 0 || far[k] <= radius[k] * 1.02) continue;
+      win.length = 0;
+      for (let dj = -W; dj <= W; dj++) {
+        const jj = j + dj;
+        if (jj < 0 || jj >= TH) continue;
+        for (let di = -W; di <= W; di++) {
+          const v = far[jj * TW + (((i + di) % TW) + TW) % TW];
+          if (v > 0) win.push(v);
+        }
+      }
+      win.sort((a, b) => a - b);
+      const median = win[win.length >> 1] ?? far[k];
+      if (far[k] > median * 1.08) continue; // a stem: keep the nearest hit
+      radius[k] = far[k];
+      hitTri[k] = farTri[k];
+      hitU[k] = farU[k];
+      hitV[k] = farV[k];
     }
   }
 
@@ -357,15 +397,46 @@ function smoothMesh() {
 function extractStem(src: THREE.BufferGeometry, map: THREE.Texture | null) {
   const geo = src.index ? src.toNonIndexed() : src;
   const P = geo.getAttribute('position');
-  const keep: number[] = [];
-  for (let t = 0; t < P.count / 3; t++) {
-    let out = false;
-    for (let e = 0; e < 3; e++) {
-      const x = P.getX(t * 3 + e), y = P.getY(t * 3 + e), z = P.getZ(t * 3 + e);
-      if (Math.hypot(x, y, z) - appleShapeR(x, y, z) > STEM_MARGIN) out = true;
-    }
-    if (out) keep.push(t);
+  const T = P.count / 3;
+  // how far each corner sticks out of the smooth surface
+  const outBy = new Float32Array(P.count);
+  for (let v = 0; v < P.count; v++) {
+    const x = P.getX(v), y = P.getY(v), z = P.getZ(v);
+    outBy[v] = Math.hypot(x, y, z) - appleShapeR(x, y, z);
   }
+  // corners shared between triangles (the copy has no index: match by position)
+  const byPos = new Map<string, number[]>();
+  const posKey = (v: number) => `${P.getX(v).toFixed(4)},${P.getY(v).toFixed(4)},${P.getZ(v).toFixed(4)}`;
+  for (let t = 0; t < T; t++) for (let e = 0; e < 3; e++) {
+    const k = posKey(t * 3 + e);
+    const list = byPos.get(k);
+    if (list) list.push(t);
+    else byPos.set(k, [t]);
+  }
+  // cores: triangles wholly out (a stem, a crown; not a ridge the smoothing shaved a little)…
+  const inStem = new Uint8Array(T);
+  let ring: number[] = [];
+  for (let t = 0; t < T; t++) {
+    if (outBy[t * 3] > STEM_MARGIN && outBy[t * 3 + 1] > STEM_MARGIN && outBy[t * 3 + 2] > STEM_MARGIN) {
+      inStem[t] = 1;
+      ring.push(t);
+    }
+  }
+  // …grown over the neighbours that still stick out a bit, so it joins the fruit without gaps
+  for (let step = 0; step < 6 && ring.length; step++) {
+    const next: number[] = [];
+    for (const t of ring) for (let e = 0; e < 3; e++) {
+      for (const n of byPos.get(posKey(t * 3 + e)) ?? []) {
+        if (inStem[n]) continue;
+        if (Math.max(outBy[n * 3], outBy[n * 3 + 1], outBy[n * 3 + 2]) < 0.02) continue;
+        inStem[n] = 1;
+        next.push(n);
+      }
+    }
+    ring = next;
+  }
+  const keep: number[] = [];
+  for (let t = 0; t < T; t++) if (inStem[t]) keep.push(t);
   if (!keep.length) return null;
   const out = new THREE.BufferGeometry();
   for (const name of ['position', 'normal', 'uv']) {

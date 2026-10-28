@@ -25,20 +25,20 @@ type KindSpec = {
 };
 const SPECS: Record<Kind, KindSpec> = {
   [ANT]: { len: 0.42, max: 40, every: [9, 11], speed: 1.15, chase: 4, grab: 0.3, hits: [3, 5], cooldown: 8 },
-  [LADYBUG]: { len: 1.7, max: 1, every: [25, 35], speed: 1.45, chase: 7, grab: 0.7, hits: [7, 10], cooldown: 12 },
+  [LADYBUG]: { len: 1.7, max: 8, every: [30, 30], speed: 1.45, chase: 7, grab: 0.7, hits: [7, 10], cooldown: 12 },
   // spiders never chase: they wander chaotically and leave a sticky thread behind
   [SPIDER]: { len: 0.77, max: 3, every: [18, 24], speed: 1.0, chase: 0, grab: 0, hits: [0, 0], cooldown: 0 },
 };
-const LIFE = 120; // a wandering ladybug leaves after this long (ants stay: there are more and more of them)
 const FLEE_SPEED = 1.9;
 const SAFE_DISTANCE = 8;
+export const LADYBUG_FLY_IN = 2.2; // seconds a new ladybug takes to fly in and settle
 const SHAKE_BREATHER = 3; // seconds nobody grabs a worm that just shook its critters off (time to burrow)
 const MAX_HOLDERS = 5; // ants holding one worm at once, at most
 const SPIDER_SENSE = 14; // a spider feels a worm stuck in a web this far away
 const SPIDER_RUSH = 2.6; // and runs over this fast
 const STING_PEACE = 15; // seconds a bitten worm is left alone
 const SILK_STEP = 0.2; // a thread point every this far
-const SILK_POINTS = 250; // a spider's thread is this many points long (~50 units); then the oldest bit goes
+export const SILK_POINTS = 250; // a spider's thread is this many points long (~50 units); then the oldest bit goes
 const SWAT_REACH = 1.6; // a tail swat scares critters this close to the worm's body
 
 export type AntState = 0 | 1 | 2 | 3; // wander, chase, attached, flee
@@ -50,7 +50,7 @@ export type TunnelPath = { id: string; pts: THREE.Vector3[] };
 const ENTRY_REACH = 0.9; // an ant this close to a passage's mouth may go in
 const MOUTH_DEPTH = 0.7; // a passage end this close under the skin is a way in / out
 
-export type WormInfo = { id: string; mode: string; disp: THREE.Vector3[]; stuck?: boolean /* in a spider thread */; g?: number /* growth */ };
+export type WormInfo = { id: string; mode: string; disp: THREE.Vector3[]; stuck?: boolean /* in a spider thread */; g?: number /* growth */; seed?: number /* speed factor from eaten seeds (ants don't match that) */ };
 
 type Ant = {
   id: number;
@@ -78,10 +78,14 @@ const randIn = ([a, b]: [number, number]) => a + Math.random() * (b - a);
 export class AntSim {
   private ants: Ant[] = [];
   private nextId = 1;
-  private spawnIn: Record<Kind, number> = { [ANT]: 3, [LADYBUG]: 15, [SPIDER]: 8 };
+  private spawnIn: Record<Kind, number> = { [ANT]: 3, [LADYBUG]: 30, [SPIDER]: 8 };
   private threads = new Map<number, THREE.Vector3[]>(); // spider id → its silk, oldest first
+  private silkTotal = new Map<number, number>(); // points ever spun, per spider
+  private silkSent = new Map<number, number>(); // …of which already sent
   private hits = new Map<string, { done: number; need: number }>(); // "<player>:<kind>"
   private tmp = new THREE.Vector3();
+  private tmp2 = new THREE.Vector3();
+  private tmp3 = new THREE.Vector3();
   private lastWorms: WormInfo[] = [];
   /** A spider bit this worm (stuck in its web): the host freezes it. */
   onSting?: (wormId: string, ball: number) => void;
@@ -101,8 +105,10 @@ export class AntSim {
   clear() {
     this.ants = [];
     this.hits.clear();
-    this.spawnIn = { [ANT]: 3, [LADYBUG]: 15, [SPIDER]: 8 };
+    this.spawnIn = { [ANT]: 3, [LADYBUG]: 30, [SPIDER]: 8 };
     this.threads.clear();
+    this.silkTotal.clear();
+    this.silkSent.clear();
     this.stungUntil.clear();
     this.safeUntil.clear();
   }
@@ -192,15 +198,17 @@ export class AntSim {
       const h = w.disp[0];
       const last = this.lastHead.get(w.id);
       if (last && dt > 0) {
-        const v = Math.min(10, last.distanceTo(h) / dt);
+        const v = Math.min(10, last.distanceTo(h) / dt) / Math.max(1, w.seed ?? 1); // a seed's speed is a real head start
         const old = this.wormSpeed.get(w.id) ?? v;
         this.wormSpeed.set(w.id, old + (v - old) * Math.min(1, dt * 1.5));
       }
-      this.lastHead.set(w.id, h.clone());
+      if (last) last.copy(h);
+      else this.lastHead.set(w.id, h.clone());
     }
     for (const a of this.ants) {
       const spec = SPECS[a.kind];
       a.age += dt;
+      if (a.kind === LADYBUG && a.age < LADYBUG_FLY_IN) continue; // still flying in (drawn by the view)
       a.cool = Math.max(0, a.cool - dt);
       const target = byId.get(a.target);
       if (a.tun) {
@@ -214,7 +222,19 @@ export class AntSim {
           a.cool = spec.cooldown;
           if (target) a.p.copy(target.disp[a.seg]);
           appleProject(a.p);
-        } else a.p.copy(target.disp[a.seg]);
+        } else {
+          a.p.copy(target.disp[a.seg]);
+          // a ladybug holding someone can be bitten in the side or the back by another worm: it lets go and runs
+          const biter = a.kind === LADYBUG ? this.bitesLadybug(a, target, worms) : null;
+          if (biter) {
+            this.hits.delete(`${target.id}:${LADYBUG}`);
+            appleProject(a.p);
+            a.state = 3;
+            a.target = biter; // runs away from the one that bit it
+            a.startle = 0.15;
+            a.cool = spec.cooldown;
+          }
+        }
         continue;
       }
       if (a.state === 3 && a.startle > 0) {
@@ -285,13 +305,26 @@ export class AntSim {
         }
       }
     }
-    this.ants = this.ants.filter((a) => !(a.kind === LADYBUG && a.state === 0 && a.age > LIFE));
     return this.ants.map((a) => [a.id, a.state, r3(a.p.x), r3(a.p.y), r3(a.p.z), r3(a.f.x), r3(a.f.y), r3(a.f.z), a.target, a.seg, r3(a.ang), a.kind, a.tun ? 1 : 0, a.tun, r3(a.tpos)]);
   }
 
-  /** Silk threads of the spiders: [spider id, x, y, z, x, y, z, …] each. */
+  /** Silk threads of the spiders in full: [spider id, points ever spun, x, y, z, x, y, z, …] each. */
   webs(): number[][] {
-    return [...this.threads].map(([id, pts]) => [id, ...pts.flatMap((p) => [r3(p.x), r3(p.y), r3(p.z)])]);
+    for (const [id, n] of this.silkTotal) this.silkSent.set(id, n); // sent in full: no new bits owed
+    return [...this.threads].map(([id, pts]) => [id, this.silkTotal.get(id) ?? pts.length, ...pts.flatMap((p) => [r3(p.x), r3(p.y), r3(p.z)])]);
+  }
+
+  /** Just the silk spun since the last call: [spider id, points ever spun, the new points…] per spider. */
+  websDelta(): number[][] {
+    const out: number[][] = [];
+    for (const [id, pts] of this.threads) {
+      const total = this.silkTotal.get(id) ?? 0;
+      const fresh = Math.min(pts.length, total - (this.silkSent.get(id) ?? 0));
+      if (fresh <= 0) continue;
+      this.silkSent.set(id, total);
+      out.push([id, total, ...pts.slice(-fresh).flatMap((p) => [r3(p.x), r3(p.y), r3(p.z)])]);
+    }
+    return out;
   }
 
   /** Chaotic: sudden turns, bursts and stops; spins a thread as it goes. */
@@ -335,8 +368,34 @@ export class AntSim {
     const last = silk[silk.length - 1];
     if (!last || last.distanceTo(a.p) > SILK_STEP) {
       silk.push(a.p.clone());
+      this.silkTotal.set(a.id, (this.silkTotal.get(a.id) ?? 0) + 1);
       if (silk.length > SILK_POINTS) silk.shift();
     }
+  }
+
+  /**
+   * Is another worm biting this ladybug (which holds `held` by an end)? Its head on the ladybug's body,
+   * coming at the side or the back, not at its face. Returns the biter's id.
+   */
+  private bitesLadybug(a: Ant, held: WormInfo, worms: WormInfo[]): string | null {
+    const len = SPECS[LADYBUG].len;
+    const ball = held.disp[a.seg];
+    const next = held.disp[a.seg === 0 ? 1 : N - 2];
+    const out = this.tmp.subVectors(ball, next).normalize(); // from the worm's end outwards: where its body is
+    const r = RADII[a.seg] * girth(held.g ?? 1);
+    const center = this.tmp2.copy(ball).addScaledVector(out, len * 0.4 + r * 0.4); // as drawn
+    for (const w of worms) {
+      if (w.id === held.id || w.mode !== 'surface') continue;
+      const head = w.disp[N - 1];
+      const headR = RADII[N - 1] * girth(w.g ?? 1);
+      const d = this.tmp3.subVectors(head, center);
+      const dist = d.length();
+      if (dist > len * 0.55 + headR) continue;
+      // its face looks back along -out at the worm it holds: a head there is face to face, no bite
+      if (dist > 1e-6 && d.dot(out) / dist < -0.5) continue;
+      return w.id;
+    }
+    return null;
   }
 
   /** Head for the mouth of a passage a worm is burrowing in, and go in after it. */
@@ -546,10 +605,19 @@ export class AntSim {
 // ---------- drawing ----------
 
 const sphere = new THREE.SphereGeometry(1, 14, 10);
-const dome = new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2); // upper half
 const antMat = new THREE.MeshStandardMaterial({ color: 0x1b0f0a, roughness: 0.35, metalness: 0.1 });
 const blackMat = new THREE.MeshStandardMaterial({ color: 0x0e0b0a, roughness: 0.3 });
 const shellMat = new THREE.MeshStandardMaterial({ color: 0xd8180f, roughness: 0.22, metalness: 0.05 });
+// a ladybug's wing cases: the dome's left and right halves (they open to fly)
+const domeLeft = new THREE.SphereGeometry(1, 12, 12, -Math.PI / 2, Math.PI, 0, Math.PI / 2);
+const domeRight = new THREE.SphereGeometry(1, 12, 12, Math.PI / 2, Math.PI, 0, Math.PI / 2);
+// its flying wings: a flat oval, smoky and see-through
+const wingShape = new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2);
+const wingMat = new THREE.MeshStandardMaterial({ color: 0xd9dde6, roughness: 0.3, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
+const smooth01 = (x: number) => {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * (3 - 2 * t);
+};
 const legMat = new THREE.LineBasicMaterial({ color: 0x140b07 });
 // a ladybug's seam: a thin black line arching over its shell from front to back
 const seam = new THREE.TubeGeometry(
@@ -576,6 +644,8 @@ type AntMesh = {
   feelers: number;
   tpos: number; // drawn position along its passage (follows the path, never cuts corners)
   tun?: string; // the passage it's drawn in
+  born: number; // performance.now() when it appeared (a ladybug flies in)
+  fly?: { elytra: THREE.Group[]; wings: THREE.Group[]; seam: THREE.Mesh; mats: THREE.Material[] };
 };
 
 /** Draws the critters from snapshots; one holding a worm sits on that worm's balls as each client sees them. */
@@ -588,6 +658,14 @@ export class AntView {
   private up = new THREE.Vector3();
   private snaps: AntSnap[] = [];
   private inside = false;
+  private primed = false; // critters already there when we joined don't fly in
+  private cam = new THREE.Vector3(0, 0, 40); // where the viewer is: ladybugs fly in from behind it
+  private flyFrom = new THREE.Vector3();
+
+  /** The camera position (a new ladybug comes in from over the viewer's shoulder). */
+  setCamera(p: THREE.Vector3) {
+    this.cam.copy(p);
+  }
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group);
@@ -601,10 +679,12 @@ export class AntView {
       let a = this.ants.get(s[0]);
       if (!a) {
         a = this.make(s);
+        if (!this.primed) a.born = -1e9;
         this.ants.set(s[0], a);
       }
       a.snap = s;
     }
+    this.primed = true;
     for (const [id, a] of this.ants) {
       if (alive.has(id)) continue;
       this.group.remove(a.group);
@@ -617,6 +697,53 @@ export class AntView {
 
   clear() {
     this.apply([]);
+  }
+
+  /** A new ladybug flies in from behind the viewer, wing cases open, wings whirring; lands and folds them. */
+  private flyIn(a: AntMesh) {
+    const fly = a.fly;
+    if (!fly) return;
+    const t = (performance.now() - a.born) / 1000 / LADYBUG_FLY_IN;
+    if (t >= 1) {
+      if (fly.wings[0].visible || !fly.seam.visible) {
+        for (const g of fly.elytra) g.rotation.set(0, 0, 0);
+        for (const w of fly.wings) w.visible = false;
+        fly.seam.visible = true;
+        for (const m of fly.mats) {
+          m.transparent = m === fly.mats[2];
+          m.opacity = m === fly.mats[2] ? 0.45 : 1;
+        }
+      }
+      return;
+    }
+    const LAND = 0.72; // touches down at this part of the time, then folds its wings
+    const k = Math.min(1, t / LAND);
+    const e = 1 - (1 - k) ** 3; // fast in, slowing to land
+    // from just behind and above the viewer down to its spot, along a gentle arc
+    const land = a.group.position;
+    this.flyFrom.subVectors(this.cam, land);
+    const dist = this.flyFrom.length();
+    this.flyFrom.multiplyScalar(1.25).add(land).addScaledVector(this.up, 0.15 * dist);
+    land.lerpVectors(this.flyFrom, land.clone(), e).addScaledVector(this.up, Math.sin(k * Math.PI) * 0.12 * dist * (1 - e));
+    // a little bob and tilt in the air
+    a.group.rotateZ(Math.sin(t * 20) * 0.08 * (1 - e));
+    a.group.rotateX(-0.35 * (1 - e));
+    const open = t < LAND ? 1 : 1 - smooth01((t - LAND) / (1 - LAND));
+    // the cases swing up and out from the seam, their rear ends raised
+    fly.elytra[0].rotation.set(0.45 * open, 0, -0.95 * open);
+    fly.elytra[1].rotation.set(0.45 * open, 0, 0.95 * open);
+    fly.seam.visible = open < 0.02;
+    const flap = Math.sin(performance.now() * 0.06) * 0.6;
+    for (let i = 0; i < 2; i++) {
+      fly.wings[i].visible = open > 0.15;
+      fly.wings[i].rotation.set(0, 0, (i ? -1 : 1) * flap * open);
+      fly.wings[i].scale.setScalar(Math.max(0.01, open));
+    }
+    const alpha = smooth01(t / 0.1); // no sudden pop
+    for (const m of fly.mats) {
+      m.transparent = alpha < 1 || m === fly.mats[2];
+      m.opacity = m === fly.mats[2] ? 0.45 * alpha : alpha;
+    }
   }
 
   /** Hide and seek: a worm inside sees only critters in the passages, a worm on the skin only those outside. */
@@ -698,11 +825,13 @@ export class AntView {
       this.m.lookAt(a.f, new THREE.Vector3(), this.up);
       a.group.quaternion.setFromRotationMatrix(this.m);
       this.poseLegs(a, len, s[11]);
+      if (s[11] === LADYBUG) this.flyIn(a);
     }
   }
 
   private make(s: AntSnap): AntMesh {
     const group = new THREE.Group();
+    let fly: AntMesh['fly'];
     const L = SPECS[s[11]].len;
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
       const m = new THREE.Mesh(geo, mat);
@@ -712,16 +841,50 @@ export class AntView {
       return m;
     };
     if (s[11] === LADYBUG) {
-      // red dome with black spots and a seam, black head
-      add(dome, shellMat, 0, 0.04, -0.05, 0.36, 0.3, 0.42);
-      add(sphere, blackMat, 0, 0.1, 0.36, 0.15, 0.11, 0.12);
-      add(sphere, blackMat, 0, 0.05, -0.05, 0.33, 0.06, 0.4); // underside
-      const spots: [number, number][] = [[0.15, 0.1], [-0.15, 0.1], [0.2, -0.12], [-0.2, -0.12], [0.1, -0.3], [-0.1, -0.3], [0, 0.22]];
-      for (const [x, z] of spots) {
-        const y = 0.04 + 0.3 * Math.sqrt(Math.max(0, 1 - (x / 0.36) ** 2 - ((z + 0.05) / 0.42) ** 2));
-        add(sphere, blackMat, x, y, z, 0.055, 0.02, 0.055);
+      // its own materials (it fades in as it flies in)
+      const shell = shellMat.clone();
+      const black = blackMat.clone();
+      const membrane = wingMat.clone();
+      // two red wing cases (the dome's halves) hinged along the top seam, black spots on them
+      const HINGE_Y = 0.34;
+      const elytra: THREE.Group[] = [];
+      for (const sideX of [-1, 1]) {
+        const hinge = new THREE.Group();
+        hinge.position.set(0, HINGE_Y * L, -0.05 * L);
+        group.add(hinge);
+        const half = new THREE.Mesh(sideX < 0 ? domeLeft : domeRight, shell);
+        half.position.set(0, (0.04 - HINGE_Y) * L, 0);
+        half.scale.set(0.36 * L, 0.3 * L, 0.42 * L);
+        hinge.add(half);
+        for (const [sx, z] of [[0.15, 0.1], [0.2, -0.12], [0.1, -0.3]] as const) {
+          const x = sx * sideX;
+          const y = 0.04 + 0.3 * Math.sqrt(Math.max(0, 1 - (x / 0.36) ** 2 - ((z + 0.05) / 0.42) ** 2));
+          const spot = new THREE.Mesh(sphere, black);
+          spot.position.set(x * L, (y - HINGE_Y) * L, (z + 0.05) * L);
+          spot.scale.set(0.055 * L, 0.02 * L, 0.055 * L);
+          hinge.add(spot);
+        }
+        elytra.push(hinge);
       }
-      add(seam, blackMat, 0, 0, 0, 1, 1, 1); // the seam between the wing cases, over the dome
+      add(sphere, black, 0, 0.27, 0.22, 0.055, 0.02, 0.055); // the spot up front
+      add(sphere, black, 0, 0.1, 0.36, 0.15, 0.11, 0.12); // head
+      add(sphere, black, 0, 0.05, -0.05, 0.33, 0.06, 0.4); // underside
+      const seamMesh = add(seam, black, 0, 0, 0, 1, 1, 1); // the seam between the wing cases
+      // thin see-through flying wings, folded away under the cases
+      const wings: THREE.Group[] = [];
+      for (const sideX of [-1, 1]) {
+        const root = new THREE.Group();
+        root.position.set(sideX * 0.05 * L, 0.3 * L, 0.05 * L);
+        group.add(root);
+        const w = new THREE.Mesh(wingShape, membrane);
+        w.position.set(sideX * 0.42 * L, 0, -0.12 * L);
+        w.scale.set(0.42 * L, 1, 0.2 * L);
+        w.rotation.y = sideX * 0.35;
+        root.add(w);
+        root.visible = false;
+        wings.push(root);
+      }
+      fly = { elytra, wings, seam: seamMesh, mats: [shell, black, membrane] };
     } else if (s[11] === SPIDER) {
       // small head-chest, big round abdomen, dark
       add(sphere, spiderMat, 0, 0.16, 0.12, 0.13, 0.1, 0.14);
@@ -739,7 +902,7 @@ export class AntView {
     lines.frustumCulled = false;
     group.add(lines);
     this.group.add(group);
-    return { group, legs, p: new THREE.Vector3(s[2], s[3], s[4]), f: new THREE.Vector3(s[5], s[6], s[7]), snap: s, phase: Math.random() * 6, feelers: Math.random() * 6, tpos: s[14] ?? 0 };
+    return { group, legs, p: new THREE.Vector3(s[2], s[3], s[4]), f: new THREE.Vector3(s[5], s[6], s[7]), snap: s, phase: Math.random() * 6, feelers: Math.random() * 6, tpos: s[14] ?? 0, born: performance.now(), fly };
   }
 
   /** Six legs (hip → knee → foot) stepping in a tripod gait, plus two antennae. */

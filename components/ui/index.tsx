@@ -84,7 +84,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
 
 export function Select({ options, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: ReactNode }[] }) {
   return (
-    <select className={s.input} {...rest}>
+    <select className={`${s.input} ${s.select}`} {...rest}>
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
@@ -134,5 +134,14 @@ export function Toast({ children, style }: { children: ReactNode; style?: CSSPro
     <div className={s.toast} style={style} role="status">
       {children}
     </div>
+  );
+}
+
+/** An outlined rubbish bin (remove a bot, close a room). */
+export function BinIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
+    </svg>
   );
 }

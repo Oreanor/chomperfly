@@ -32,18 +32,17 @@ A room lives while someone is in it and closes about a minute after the last pla
 | **W** | forward (crawl on the skin / gnaw inside) |
 | **A / D** | turn (inside the fruit the mouse steers too; on the skin the mouse turns the camera) |
 | **S** | stand up on the tail |
-| **Shift** | run ×2 |
 | **Space** | spring hop on the tail (over a spider web) |
 | **Left mouse button** | burrow in / gnaw |
-| **E / Q** | up / down inside the fruit |
 | **← / →** | orbit the camera |
 | **↑ / ↓ / wheel** | camera closer / farther |
 | **V** | reset the view |
 | **X** | x-ray on the skin (always on inside) |
+| **R** | restart the round for everyone (asks first) |
 | **N** | settings: name, language (EN/RU), theme |
 | **H** | hide the key hints |
 
-The first click in the game only captures the mouse (Esc releases it).
+A click in the game captures the mouse (Esc releases it).
 
 ## Running it
 
@@ -62,15 +61,16 @@ For players outside your network the simplest free option is a tunnel from your 
 ## Adding a fruit (map)
 
 1. Put a GLB model at `public/fruits/<name>.glb`. The stem should point up (+Y). The shape must be "star-shaped": every ray from the center hits the surface once (apple, pear, plum, orange are fine; a banana is not).
-2. Optionally add an equirectangular sky panorama `public/sky/<name>.jpg` (2:1). The brightest spot becomes the sun direction.
-3. Optionally add a display name in `lib/i18n.tsx` (`fruit.<name>`) and `components/Lobby.tsx` (`FRUIT_NAMES`).
+2. Describe it in `lib/fruits.json`: flesh colour, seeds (kind, count, speed per seed) or a pit model. Only fruits listed there show up in the lobby.
+3. Optionally add an equirectangular sky panorama `public/sky/<name>.jpg` (2:1). The brightest spot becomes the sun direction.
+4. Optionally add a display name in `lib/i18n.tsx` (`fruit.<name>`) and `components/Lobby.tsx` (`FRUIT_NAMES`).
 
-The map appears in the lobby automatically. At load time the model is centred, scaled, its small bumps are smoothed out and its texture is re-baked into a spherical layout; worms crawl exactly on that smooth surface.
+The map then appears in the lobby. At load time the model is centred, scaled, its small bumps are smoothed out and its texture is re-baked into a spherical layout; worms crawl exactly on that smooth surface.
 
 ## Project structure
 
 ```
-server.mjs              Next.js + WebSocket server: lobby API, rooms, relay, bites, wins
+server.mjs              Next.js + WebSocket server: lobby API, rooms, relay, bites, wins, the critters' host
 components/
   Game.tsx              React shell: name → lobby → game
   Lobby.tsx             room list and "create room"
@@ -78,16 +78,23 @@ components/
   AccountDialogs.tsx    name prompt and settings
   ui/                   small UI kit (Button, Modal, Select, Segmented, Toast…)
 lib/
+  rules.json            rules shared by the game and the server (goals, size at the win, seed bonus, bite stun, ball radii)
+  fruits.json           what each fruit has inside (flesh, seeds, pit)
+  protocol.ts           every message the game sends to the server
+  net.ts                the WebSocket connection (reconnects)
   game/engine.ts        3D scene, input, camera, network, bots, victory
   worm/WormSim.ts       worm movement: inchworm, burrowing, growth, flight
   worm/Bot.ts           bot brain (plays over its own connection)
+  worm/Ants.ts          ants, ladybugs, spiders: simulated by one player (the host), drawn by all
   worm/wormView.ts      worm look: balls, eyes, wings, antennae, name tags
-  worm/constants.ts     tuning: sizes, speeds, win points
-  render/               fruit and glass materials, tunnels, holes, sky, confetti
+  worm/constants.ts     tuning: sizes, speeds
+  render/               fruit and glass materials, tunnels, holes, sky dome, seeds, webs, effects
   apple.ts              fruit shape (radius by direction) used by the physics
   appleModel.ts         GLB loading, smoothing, texture re-baking
   bite.mjs              server-side bite check
   i18n.tsx, theme.tsx   languages and themes
 ```
+
+Network: every player sends its own worm ~15 times a second; the server relays it and checks bites, seeds and wins. One player (the "host", picked by the server, handed over if it goes quiet) simulates the critters and sends them 10 times a second; spider threads go in full every 4 s and as new bits in between. A player whose connection lags simply skips the stale updates.
 
 In development the browser console has two helpers: `__worm()` shows the game state and `__wormFly()` previews the victory flight.

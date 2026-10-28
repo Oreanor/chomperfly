@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { R0, appleF, appleNormal, appleProject, appleShapeR, pushOutOfPit, setPit } from '@/lib/apple';
 import { connectNet, type NetMsg } from '@/lib/net';
 import type { AppleModel } from '@/lib/appleModel';
-import { FLESH_COLORS, makeFruitMaterial, makeFruitUniforms } from '@/lib/render/materials';
+import { addCutaway, makeFruitMaterial, makeFruitUniforms } from '@/lib/render/materials';
+import { fruitSpec } from '@/lib/fruits';
 import { HoleLayer, TunnelStore } from '@/lib/render/tunnels';
 import { Confetti } from '@/lib/render/confetti';
 import { Impacts } from '@/lib/render/impacts';
@@ -15,7 +16,7 @@ import { SkyDome, loadFruitSky, sunDirFromPanorama } from '@/lib/render/sky';
 import { WormSim, type SimInput } from '@/lib/worm/WormSim';
 import { Bot } from '@/lib/worm/Bot';
 import { disposeWormView, makeWormView, placeLabel, poseWorm, setLabel, setStunGlow, setWormColor, type WormView } from '@/lib/worm/wormView';
-import { DEFAULT_NAME, girth, L0, N, RADII, TUNNEL_R0, WIN_GROWTH, WIN_SIZE_GAIN, damp, r3, smoothstep } from '@/lib/worm/constants';
+import { DEFAULT_NAME, SEED_BONUS_MS, WIN_DEFAULT, amokBoost, girth, L0, N, RADII, TUNNEL_R0, WIN_GROWTH, WIN_SIZE_GAIN, damp, r3, smoothstep } from '@/lib/worm/constants';
 
 /** What the React UI shows. Kept small: it is compared and re-sent every frame. */
 export type HudState = {
@@ -24,7 +25,8 @@ export type HudState = {
   roster: string; // JSON of RosterRow[]
   toast: string; // "<kind>:<name>"
   fps: number;
-  seedBoost: number; // seconds of seed speed bonus left
+  seedBoost: number; // seconds until the last seed bonus ends
+  seedMul: number; // speed multiplier from seeds, 1 = none
   countdown: number; // Date.now() when a 3-2-1-START countdown began, 0 = none
   ants: number; // ants riding my worm
   grip: '' | 'head' | 'tail'; // a ladybug holds this end
@@ -75,15 +77,27 @@ type Remote = {
   fx: number;
   prevFx: number;
   fxAt: number; // local time when fx arrived: the flight clock runs on between updates
+  from: THREE.Vector3[]; // where the balls were drawn when the last update came: we glide from there to target
+  recvAt: number; // local time of the last update
+  every: number; // how often updates come (smoothed), the glide's length
+  waveAt: number; // local time the swallowing wave value came, and how fast it runs: it moves on between updates
+  waveRate: number;
   stuck?: boolean; // in a spider thread
+  seed?: number; // its speed factor from seeds
 };
 
 const DEFAULT_ZOOM = 2;
+const INTRO_HOLD = 0.7; // seconds on the whole fruit when joining
+const INTRO_FLY = 1.8; // then a gentle swoop down to the worm
+const GULP_AMOK = 3; // panicking (spider venom): the swallowing wave swells 3× bigger, huge gulps
+const OVERVIEW_FLY = 1.8; // after a win, the drift back to the whole fruit
+const WIDE_LOOK = new THREE.Vector3(0, 0.05 * R0, 0); // where the whole-fruit shot looks
+const Y_UP = new THREE.Vector3(0, 1, 0);
 export const COUNTDOWN_MS = 3000; // "3", "2", "1", then START
 
 export function startEngine(o: EngineOptions): Engine {
-  // the size grows 10× by the win whatever the goal; points come at the same pace (a bigger goal = a longer round)
-  const winPoints = o.room.win || 300;
+  // the size grows 3× by the win whatever the goal; a bigger goal just takes longer
+  const winPoints = o.room.win || WIN_DEFAULT;
   const score = (growth: number) => Math.max(0, Math.floor(((growth - 1) / WIN_SIZE_GAIN) * winPoints + 1e-6));
   const { mount, model } = o;
   const { fruit } = o.room;
@@ -118,6 +132,26 @@ export function startEngine(o: EngineOptions): Engine {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   mount.appendChild(renderer.domElement);
   const canvas = renderer.domElement;
+  // hidden until the worm has its place (no jump of the camera on joining), then fades in
+  canvas.style.opacity = '0';
+  canvas.style.transition = 'opacity 0.45s ease';
+  let introAt = -100; // game time when the opening shot started (the whole fruit, then down to the worm)
+  let introFrom: { pos: THREE.Vector3; q: THREE.Quaternion } | null = null; // a new round: fly from here (no hold)
+  // after a win: the whole fruit, from where the camera was (side), until the next round
+  let overview: { at: number; side: THREE.Vector3; fromPos: THREE.Vector3; fromQ: THREE.Quaternion } | null = null;
+  const startOverview = () => {
+    const side = new THREE.Vector3(camera.position.x, 0, camera.position.z);
+    if (side.lengthSq() < 1e-6) side.set(0, 0, 1);
+    overview = { at: time, side: side.normalize(), fromPos: camera.position.clone(), fromQ: camera.quaternion.clone() };
+  };
+  const reveal = () => {
+    if (canvas.style.opacity !== '1') {
+      introAt = time;
+      introFrom = null; // joining: the whole fruit first
+    }
+    canvas.style.opacity = '1';
+  };
+  later(3000, reveal); // no server answer: show it anyway
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xdcdcdc); // until the panorama loads
@@ -158,16 +192,22 @@ export function startEngine(o: EngineOptions): Engine {
 
   // ---------- fruit ----------
   const fruitUniforms = makeFruitUniforms();
-  if (FLESH_COLORS[fruit] !== undefined) {
+  const flesh = fruitSpec(fruit).flesh; // lib/fruits.json
+  if (flesh) {
     // e.g. a golden peach; the haze inside the flesh takes the same colour
-    fruitUniforms.uFlesh.value.setHex(FLESH_COLORS[fruit]);
-    fog.color.setHex(FLESH_COLORS[fruit]);
+    fruitUniforms.uFlesh.value.set(flesh);
+    fog.color.set(flesh);
   }
   const fruitGeo = model ? model.geometry : proceduralFruitGeometry();
   const fruitMat = makeFruitMaterial(fruitUniforms, model?.map ?? null);
   const fruitMesh = new THREE.Mesh(fruitGeo, fruitMat);
   fruitMesh.renderOrder = 10;
   scene.add(fruitMesh);
+  // inside: the far wall stays solid flesh and hides the outside world (drawn first, behind everything inside)
+  const backdropMat = makeFruitMaterial(fruitUniforms, model?.map ?? null, true);
+  const fruitBackdrop = new THREE.Mesh(fruitGeo, backdropMat);
+  fruitBackdrop.renderOrder = -5;
+  scene.add(fruitBackdrop);
   const extras = model?.stem ? [modelStem(model.stem)] : proceduralStemAndLeaf();
   scene.add(...extras);
 
@@ -196,9 +236,13 @@ export function startEngine(o: EngineOptions): Engine {
   let webShakes = 0; // stuck in a thread: jerks left to get free
   let webFreeUntil = 0; // just got free: can cross threads for a moment
   let websSentAt = 0;
+  let hudAt = -1; // when the player list was last refreshed
+  let websFullAt = -10;
+  let pendingWebs: { w?: number[][]; wd?: number[][] } | null = null; // threads waiting for the next critters' message
   // seeds are bonuses; a fruit with a pit has the pit (an obstacle, seen only from inside) instead
   const pit = o.pit ?? null;
-  const seeds = pit ? null : new Seeds(scene);
+  const seeds = pit ? null : new Seeds(scene, fruit);
+  seeds?.useCutaway((m) => addCutaway(m, fruitUniforms)); // membranes and arils don't hide the worm
   if (pit) {
     scene.add(pit.object);
     setPit({ c: new THREE.Vector3(), r: pit.radii });
@@ -211,9 +255,16 @@ export function startEngine(o: EngineOptions): Engine {
   let antsSentAt = 0;
   let antsOnMe = 0;
   let gripOnMe: 'head' | 'tail' | null = null; // a ladybug holds this end of my worm
-  const SEED_BONUS_MS = 10_000; // ×2 speed after eating a seed
-  let seedBoostUntil = 0;
-  let seedAskedAt = -10; // don't spam the server while it answers
+  let seedCharges: { until: number; add: number }[] = []; // each seed adds `add` to the base speed; they stack
+  let seedPending = -1; // index we already asked the server about
+  let seedAskedAt = -10;
+  const seedFactor = () => {
+    const now = performance.now();
+    if (seedCharges.some((c) => c.until <= now)) seedCharges = seedCharges.filter((c) => c.until > now);
+    let add = 0;
+    for (const c of seedCharges) add += c.add;
+    return 1 + add;
+  };
   const CONFETTI_AT = 1.0; // seconds into the victory flight: the wings spring out
   /** Pop confetti when a flying worm's wings come out (fx passes CONFETTI_AT). */
   const maybeConfetti = (prevFx: number, fx: number, disp: THREE.Vector3[], size: number) => {
@@ -232,8 +283,10 @@ export function startEngine(o: EngineOptions): Engine {
   let pendingPts: number[] = [];
   let winClaimedAt = -10;
   let frozenUntil = 0; // bitten
-  let amokUntil = 0; // stung by a spider: runs wild (twice the boost), can only steer
+  let roundResults: Map<string, number> | null = null; // after a win, until OK: the final points on the board
+  let amokUntil = 0; // stung by a spider: panics (twice the pace), can only steer
 
+  let curTunnelR = TUNNEL_R0; // its radius (sent with the points too)
   const newTunnelId = () => {
     let id;
     do id = `${myId}-${++tunnelCounter}`;
@@ -241,7 +294,7 @@ export function startEngine(o: EngineOptions): Engine {
     return id;
   };
   const flushTunnelPts = () => {
-    if (pendingPts.length && curTunnel) net.send({ t: 'tp', id: curTunnel, pts: pendingPts });
+    if (pendingPts.length && curTunnel) net.send({ t: 'tp', id: curTunnel, pts: pendingPts, r: curTunnelR });
     pendingPts = [];
   };
 
@@ -249,6 +302,7 @@ export function startEngine(o: EngineOptions): Engine {
     {
       tunnelStart: (r) => {
         curTunnel = newTunnelId();
+        curTunnelR = r3(r);
         tunnels.get(curTunnel, r);
         net.send({ t: 'ts', id: curTunnel, r: r3(r) });
       },
@@ -299,7 +353,8 @@ export function startEngine(o: EngineOptions): Engine {
   // bots run in this tab over their own connections
   const bots: Bot[] = [];
   const addBot = () => {
-    const taken = new Set([myName, ...[...players.values()].map((p) => p.name)]);
+    // names in use: players, and our bots (two added at once aren't players yet)
+    const taken = new Set([myName, ...[...players.values()].map((p) => p.name), ...bots.map((b) => b.name)]);
     const bot = new Bot(o.room.id, taken, (p, reach) => seeds?.hit(p, reach) ?? -1, () => freeSpot(true), (reason) => {
       if (reason === 'full') toast('full:');
       const i = bots.indexOf(bot);
@@ -339,6 +394,7 @@ export function startEngine(o: EngineOptions): Engine {
               sim.spawn(freeSpot());
               camInit = false;
             }
+            later(80, reveal); // a couple of frames for the camera to settle
           });
           myColor = m.color;
           setWormColor(myView, myColor);
@@ -353,9 +409,11 @@ export function startEngine(o: EngineOptions): Engine {
           seeds?.setAll(m.seeds ?? []);
           isHost = m.host === myId;
           if (sim.mode === 'dig') {
+            // reconnected mid-burrow: carry on in a new passage (as wide as this worm's passages are)
             curTunnel = newTunnelId();
-            tunnels.get(curTunnel, sim.growth * TUNNEL_R0);
-            net.send({ t: 'ts', id: curTunnel, r: r3(sim.growth * TUNNEL_R0) });
+            curTunnelR = r3(girth(sim.growth) * TUNNEL_R0);
+            tunnels.get(curTunnel, curTunnelR);
+            net.send({ t: 'ts', id: curTunnel, r: curTunnelR });
           }
           updateHud({ players: players.size + 1 });
           if (botsToAdd) {
@@ -390,6 +448,11 @@ export function startEngine(o: EngineOptions): Engine {
               view: makeWormView(pl.color, scene),
               disp: Array.from({ length: N }, () => new THREE.Vector3()),
               target: Array.from({ length: N }, () => new THREE.Vector3()),
+              from: Array.from({ length: N }, () => new THREE.Vector3()),
+              recvAt: 0,
+              every: 0.066,
+              waveAt: 0,
+              waveRate: 0,
               has: false,
               last: 0,
               mode: 'surface',
@@ -402,17 +465,34 @@ export function startEngine(o: EngineOptions): Engine {
             setLabel(r.view, pl.name, pl.color);
             remotes.set(m.id, r);
           }
-          for (let k = 0; k < N; k++) r.target[k].set(m.p[k * 3], m.p[k * 3 + 1], m.p[k * 3 + 2]);
-          if (!r.has) r.disp.forEach((v, k) => v.copy(r!.target[k]));
+          // glide from where it's drawn now to the new place, over about the time until the next update
+          if (r.has) r.every = THREE.MathUtils.clamp(r.every * 0.8 + (time - r.recvAt) * 0.2, 0.03, 0.25);
+          r.recvAt = time;
+          for (let k = 0; k < N; k++) {
+            r.from[k].copy(r.disp[k]);
+            r.target[k].set(m.p[k * 3], m.p[k * 3 + 1], m.p[k * 3 + 2]);
+          }
+          // first sight, or a jump (respawn, burrowing in): no glide
+          if (!r.has || r.disp[N - 1].distanceTo(r.target[N - 1]) > 2.5 * L0 * (r.size || 1)) {
+            r.disp.forEach((v, k) => v.copy(r!.target[k]));
+            r.from.forEach((v, k) => v.copy(r!.target[k]));
+          }
           r.has = true;
           r.last = time;
           r.mode = m.m === 'dig' || m.m === 'fly' ? m.m : 'surface';
           r.size = typeof m.g === 'number' ? m.g : 1;
-          r.wave = typeof m.w === 'number' ? m.w : -1;
+          {
+            // the swallowing wave: learn its pace, so it can run on smoothly between updates
+            const w = typeof m.w === 'number' ? m.w : -1;
+            if (w >= 0 && r.wave >= 0 && w > r.wave && time > r.waveAt) r.waveRate = r.waveRate * 0.7 + ((w - r.wave) / (time - r.waveAt)) * 0.3;
+            r.wave = w;
+            r.waveAt = time;
+          }
           r.prevFx = r.fx;
           r.fx = typeof m.fx === 'number' ? m.fx : -1;
           r.fxAt = time;
           r.stuck = !!m.k;
+          r.seed = typeof m.sp === 'number' ? m.sp : 1;
           maybeConfetti(r.prevFx, r.fx, r.target, r.size);
           break;
         }
@@ -448,6 +528,7 @@ export function startEngine(o: EngineOptions): Engine {
           }
           break;
         case 'reset':
+          for (const r of remotes.values()) r.size = 1; // everyone starts from 0 points
           tunnels.clear();
           holes.clear();
           seeds?.setAll([]);
@@ -455,7 +536,8 @@ export function startEngine(o: EngineOptions): Engine {
           antView.clear();
           curTunnel = '';
           pendingPts = [];
-          seedBoostUntil = 0;
+          seedCharges = [];
+          seedPending = -1;
           {
             // round start: evenly around the fruit
             const order: string[] = Array.isArray(m.order) ? m.order : [];
@@ -474,6 +556,7 @@ export function startEngine(o: EngineOptions): Engine {
         case 'ants':
           if (!isHost) antView.apply(m.a as AntSnap[]);
           if (!isHost && m.w) webs.set(m.w);
+          if (!isHost && m.wd) webs.add(m.wd);
           break;
         case 'shake':
           if (isHost) antSim.shake(m.id);
@@ -486,7 +569,8 @@ export function startEngine(o: EngineOptions): Engine {
           break;
         case 'seed':
           seeds?.setEaten(m.i, true);
-          if (m.by === myId) seedBoostUntil = performance.now() + SEED_BONUS_MS;
+          if (m.i === seedPending) seedPending = -1;
+          if (m.by === myId) seedCharges.push({ until: performance.now() + SEED_BONUS_MS, add: Number(m.add) > 0 ? Number(m.add) : 1 });
           break;
         case 'seeds':
           seeds?.setAll(m.eaten);
@@ -495,6 +579,12 @@ export function startEngine(o: EngineOptions): Engine {
           const winner = m.name || nameOf(m.id);
           const me = m.id === myId;
           toast(`win:${winner}`);
+          // the round's results stay on the board until OK (the worms themselves start again from 0)
+          roundResults = new Map([[myId, score(sim.growth)]]);
+          for (const [id, r] of remotes) roundResults.set(id, score(r.size));
+          roundResults.set(m.id, winPoints);
+          // a new round: everyone's points are 0 right away (whatever their last message said; the winner after its flight)
+          for (const [id, r] of remotes) if (id !== m.id) r.size = 1;
           // the round is over: a fresh fruit (no passages, no holes)…
           tunnels.clear();
           holes.clear();
@@ -514,6 +604,7 @@ export function startEngine(o: EngineOptions): Engine {
             spectate = { id: m.id, until: time + 4.6 };
           }
           // after the flight everyone gets the victory dialog; OK starts the next round
+          later(3300, startOverview); // as it leaves: straight to the whole fruit, no detour
           later(4600, () => updateHud({ winner, winnerMe: me }));
           break;
         }
@@ -574,20 +665,20 @@ export function startEngine(o: EngineOptions): Engine {
     }
     if (e.button !== 0) return;
     if (document.pointerLockElement !== canvas && !lockDenied) {
-      // the click that grabs the mouse doesn't start digging
+      // grab the mouse again (it got let go somehow) — and still dig with this very click
       try {
         const r = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
         r?.catch?.(() => (lockDenied = true));
       } catch {
         lockDenied = true;
       }
-      return;
+      console.info('[worm] mouse grabbed again');
     }
     holdMouse = true;
     if (sim.mode !== 'surface') return;
     // caught, stuck, stung or bitten: no burrowing; say why
     const now = performance.now();
-    const why = gripOnMe ? 'grip' : antsOnMe > 0 ? 'ants' : webShakes ? 'web' : now < amokUntil ? 'amok' : now < frozenUntil ? 'frozen' : '';
+    const why = gripOnMe ? 'grip' : antsOnMe > 0 ? 'ants' : webShakes ? 'web' : now < frozenUntil ? 'frozen' : ''; // panicking: gnaws in wildly too
     if (why) {
       holdMouse = false;
       toast(`nodig:${why}`);
@@ -667,23 +758,20 @@ export function startEngine(o: EngineOptions): Engine {
       lastArrow = time; // the camera stays where it was put for a while
     }
     const ky = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-    const kp = (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0); // inside: E up, Q down
-    const forward = !!keys.KeyW || (sim.mode === 'dig' && holdMouse); // Shift alone doesn't move: it only speeds up W
+    const forward = !!keys.KeyW || (sim.mode === 'dig' && holdMouse);
     const inp: SimInput = {
       // inside the mouse steers the head; on the skin it only turns the camera (A/D turn the worm)
       turn: -((sim.mode === 'dig' ? mx * 0.003 : 0) + ky * 1.2 * dt),
-      pitch: (sim.mode === 'dig' ? -my * 0.003 : 0) + kp * dt,
+      pitch: sim.mode === 'dig' ? -my * 0.003 : 0,
       forward,
-      boost: !!(keys.ShiftLeft || keys.ShiftRight),
       // a seed doubles the speed; every ant riding the worm halves it
-      speed: (performance.now() < seedBoostUntil ? 2 : 1) * 0.5 ** antsOnMe,
+      speed: seedFactor() * 0.5 ** antsOnMe,
       rear: !!keys.KeyS,
     };
-    if (performance.now() < amokUntil && sim.mode === 'surface') {
-      // spider venom: crawls on wildly, twice the boost; only steering is left
+    if (performance.now() < amokUntil && sim.mode !== 'fly') {
+      // spider venom: crawls (or gnaws) on wildly at twice the pace; only steering is left
       inp.forward = true;
-      inp.boost = true;
-      inp.speed = (inp.speed ?? 1) * 4;
+      inp.speed = (inp.speed ?? 1) * amokBoost(sim.growth);
       inp.rear = false;
     }
     if (performance.now() < frozenUntil || gripOnMe || webShakes) {
@@ -781,6 +869,42 @@ export function startEngine(o: EngineOptions): Engine {
     pushOutOfPit(camPos, 0.4); // nor inside the pit
     camUp.lerp(upT, damp(dt, 3)).normalize();
 
+    // the round is over (the winner flew off): the camera drifts back to the whole fruit, stem up, and waits
+    if (overview) {
+      const k = Math.min(1, (time - overview.at) / OVERVIEW_FLY);
+      const e = k * k * k * (k * (k * 6 - 15) + 10);
+      const wide = tmpN.copy(overview.side).multiplyScalar(3.3 * R0).setY(0.35 * R0);
+      camera.position.lerpVectors(overview.fromPos, wide, e);
+      mtx.lookAt(wide, WIDE_LOOK, Y_UP);
+      camQ.setFromRotationMatrix(mtx);
+      camera.quaternion.slerpQuaternions(overview.fromQ, camQ, e);
+      camPos.copy(camera.position); // when play resumes, the follow camera starts from here
+      return;
+    }
+    // the opening shot: the whole fruit, stem up, for a moment; then a swoop down to the worm
+    // (or, at a new round, a flight from wherever the camera was: no cut)
+    const it = time - introAt;
+    if (it < INTRO_HOLD + INTRO_FLY) {
+      const k = Math.min(1, Math.max(0, it - INTRO_HOLD) / INTRO_FLY);
+      const e = k * k * k * (k * (k * 6 - 15) + 10); // smootherstep: eases in and out softly
+      if (introFrom) {
+        mtx.lookAt(camPos, look, camUp);
+        camQ.setFromRotationMatrix(mtx);
+        camera.position.lerpVectors(introFrom.pos, camPos, e);
+        camera.quaternion.slerpQuaternions(introFrom.q, camQ, e);
+        return;
+      }
+      const side = tmp.set(head.x, 0, head.z);
+      if (side.lengthSq() < 1e-6) side.set(0, 0, 1);
+      side.normalize();
+      const wide = tmpN.copy(side).multiplyScalar(3.3 * R0).setY(0.35 * R0);
+      camera.position.lerpVectors(wide, camPos, e);
+      const lookAt = new THREE.Vector3().lerpVectors(WIDE_LOOK, look, e);
+      const up = new THREE.Vector3(0, 1, 0).lerp(camUp, e).normalize();
+      mtx.lookAt(camera.position, lookAt, up);
+      camera.quaternion.setFromRotationMatrix(mtx);
+      return;
+    }
     camera.position.copy(camPos);
     mtx.lookAt(camPos, look, camUp);
     camQ.setFromRotationMatrix(mtx);
@@ -799,6 +923,7 @@ export function startEngine(o: EngineOptions): Engine {
     fruitUniforms.uCut.value += (inside - fruitUniforms.uCut.value) * damp(dt, 3);
     // inside the fruit the x-ray view is always on; on the skin it's toggled with X
     fruitUniforms.uXray.value += ((xray || inside ? 1 : 0) - fruitUniforms.uXray.value) * damp(dt, 3);
+    fruitUniforms.uXrayKey.value += ((xray ? 1 : 0) - fruitUniforms.uXrayKey.value) * damp(dt, 3);
     fruitUniforms.uInside.value += (inside - fruitUniforms.uInside.value) * damp(dt, 3);
     const camInside = smoothstep(0.05, -0.4, appleF(camera.position)) * (1 - fruitUniforms.uXray.value);
     fog.near = THREE.MathUtils.lerp(500, 2.5, camInside);
@@ -811,7 +936,6 @@ export function startEngine(o: EngineOptions): Engine {
   }
 
   function updateRemotes(dt: number) {
-    const a = damp(dt, 12);
     for (const [id, r] of remotes) {
       if (time - r.last > 10) {
         removeRemote(id);
@@ -819,10 +943,13 @@ export function startEngine(o: EngineOptions): Engine {
       }
       // surface worms and burrowing worms can't see each other; a winner's flight is seen by all
       r.view.group.visible = r.mode === sim.mode || r.mode === 'fly' || sim.mode === 'fly';
-      for (let k = 0; k < N; k++) r.disp[k].lerp(r.target[k], a);
+      // evenly from the last drawn place to the newest one (no rush-and-stop between updates)
+      const g = Math.min(1, (time - r.recvAt) / r.every);
+      for (let k = 0; k < N; k++) r.disp[k].lerpVectors(r.from[k], r.target[k], g);
       // the wings flap faster than updates arrive: run the flight clock locally
       const fx = r.fx >= 0 ? r.fx + (time - r.fxAt) : -1;
-      poseWorm(r.view, r.disp, null, r.size, r.wave, fx);
+      const wave = r.wave >= 0 ? r.wave + r.waveRate * Math.min(time - r.waveAt, 0.25) : -1;
+      poseWorm(r.view, r.disp, null, r.size, wave, fx, (amokOf.get(id) ?? 0) > performance.now() ? GULP_AMOK : 1);
       setStunGlow(r.view, stunnedUntil.get(id) ?? 0);
       placeLabel(r.view, r.disp[N - 1], tmpN.copy(r.disp[N - 1]).normalize(), r.size);
     }
@@ -840,9 +967,21 @@ export function startEngine(o: EngineOptions): Engine {
   let perfN = 0;
   function frame() {
     raf = requestAnimationFrame(frame);
+    step(false);
+  }
+
+  // a background tab gets no animation frames: keep the game going (and our worm and bots online for
+  // everyone) from a worker's timer, which the browser doesn't slow down, without drawing
+  const ticker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 200);'], { type: 'text/javascript' })));
+  ticker.onmessage = () => {
+    if (document.hidden) step(true);
+  };
+
+  /** One step of the game; in the background only the game, no drawing. */
+  function step(background: boolean) {
     const t0 = performance.now();
     const clockDt = clock.getDelta();
-    const dt = Math.min(clockDt, 0.05);
+    const dt = Math.min(clockDt, background ? 0.25 : 0.05);
     time += dt;
 
     const fxBefore = sim.fx;
@@ -853,7 +992,7 @@ export function startEngine(o: EngineOptions): Engine {
       winClaimedAt = time;
       net.send({ t: 'win', g: r3(sim.growth) });
     }
-    poseWorm(myView, sim.disp, sim.ups, sim.growth, sim.wave, sim.fx);
+    poseWorm(myView, sim.disp, sim.ups, sim.growth, sim.wave, sim.fx, performance.now() < amokUntil ? GULP_AMOK : 1);
     setStunGlow(myView, stunnedUntil.get(myId) ?? 0);
     // while flying the balls' "up" faces the camera, so put the tag above the head instead
     placeLabel(myView, sim.head, sim.mode === 'fly' ? tmpN.copy(sim.head).normalize() : sim.ups[N - 1], sim.growth * (sim.mode === 'fly' ? 1.8 : 1));
@@ -867,20 +1006,33 @@ export function startEngine(o: EngineOptions): Engine {
     puffs.update(dt);
     // ants: simulate (host) and draw (everyone)
     if (isHost) {
-      const worms: WormInfo[] = [{ id: myId, mode: sim.mode, disp: sim.disp, stuck: webShakes > 0, g: sim.growth }];
-      for (const [id, r] of remotes) worms.push({ id, mode: r.mode, disp: r.disp, stuck: r.stuck, g: r.size });
+      const worms: WormInfo[] = [{ id: myId, mode: sim.mode, disp: sim.disp, stuck: webShakes > 0, g: sim.growth, seed: seedFactor() }];
+      for (const [id, r] of remotes) worms.push({ id, mode: r.mode, disp: r.disp, stuck: r.stuck, g: r.size, seed: r.seed });
       const snaps = antSim.update(dt, worms, tunnels.list());
       antView.apply(snaps);
-      const sendWebs = time - websSentAt > 0.5;
-      if (sendWebs) {
+      // spider threads: in full every few seconds (newcomers, lost bits), just the new silk in between
+      if (time - websFullAt > 4) {
+        websFullAt = websSentAt = time;
+        const w = antSim.webs();
+        webs.set(w);
+        pendingWebs = { w };
+      } else if (time - websSentAt > 0.5) {
         websSentAt = time;
-        webs.set(antSim.webs());
+        const wd = antSim.websDelta();
+        if (wd.length) {
+          webs.add(wd);
+          if (pendingWebs?.w) pendingWebs.w = antSim.webs(); // a full set still waiting: just refresh it
+          else pendingWebs = { wd: [...(pendingWebs?.wd ?? []), ...wd] };
+        }
       }
       if (time - antsSentAt > 0.1) {
         antsSentAt = time;
-        net.send({ t: 'ants', a: snaps, w: sendWebs ? antSim.webs() : undefined });
+        // the threads ride with the next critters' message (not only when both fall on one frame)
+        net.send({ t: 'ants', a: snaps, w: pendingWebs?.w, wd: pendingWebs?.wd });
+        pendingWebs = null;
       }
     }
+    antView.setCamera(camera.position); // new ladybugs fly in from behind the viewer
     antView.update(
       dt,
       (id) => {
@@ -892,6 +1044,7 @@ export function startEngine(o: EngineOptions): Engine {
     );
     if (pit) pit.object.visible = sim.mode === 'dig' || xray; // the pit shows while gnawing inside (or in x-ray)
     antView.setInside(sim.mode === 'dig');
+    seeds?.setInside(sim.mode === 'dig');
     webs.setVisible(sim.mode !== 'dig');
     // stepped on a spider thread: stuck until 5 jerks (not while hopping over it)
     if (!webShakes && sim.mode === 'surface' && !sim.airborne && performance.now() > webFreeUntil) {
@@ -903,10 +1056,12 @@ export function startEngine(o: EngineOptions): Engine {
     if (sim.mode === 'dig' && antsOnMe) sim.pullBack(0.12 * antsOnMe * dt);
     gripOnMe = sim.mode === 'surface' ? antView.ladybugGrip(myId) : null;
 
-    // gnawing into a seed eats it (the server decides who was first); none while a seed bonus runs
-    if (sim.mode === 'dig' && time - seedAskedAt > 0.5 && performance.now() >= seedBoostUntil) {
-      const i = seeds ? seeds.hit(sim.head, 0.6 * sim.L) : -1;
-      if (i >= 0) {
+    // gnawing into a seed eats it (the server decides who was first); the next one can follow at once
+    if (seedPending >= 0 && time - seedAskedAt > 0.5) seedPending = -1;
+    if (sim.mode === 'dig' && seeds) {
+      const i = seeds.hit(sim.head, 0.6 * sim.L);
+      if (i >= 0 && i !== seedPending) {
+        seedPending = i;
         seedAskedAt = time;
         net.send({ t: 'seed', i });
       }
@@ -914,18 +1069,31 @@ export function startEngine(o: EngineOptions): Engine {
     updateRemotes(dt);
     for (const b of bots) b.update(dt);
 
-    const now = performance.now();
-    const stunned = (id: string) => Math.max(0, Math.ceil(((stunnedUntil.get(id) ?? 0) - now) / 1000));
-    const panic = (id: string) => Math.max(0, Math.ceil(((amokOf.get(id) ?? 0) - now) / 1000));
-    const roster: RosterRow[] = [
-      { id: myId, name: myName, color: myColor, mode: sim.mode, me: true, score: score(sim.growth), myBot: false, stunned: stunned(myId), panic: panic(myId) },
-    ];
-    for (const [id, pl] of players) {
-      const r = remotes.get(id);
-      const myBot = bots.some((b) => b.serverId === id);
-      roster.push({ id, name: pl.name, color: pl.color, mode: r?.mode ?? 'surface', me: false, score: score(r?.size ?? 1), myBot, stunned: stunned(id), panic: panic(id) });
+    // the player list and the hints: 10 times a second is plenty (and spares React)
+    if (time - hudAt >= 0.1 || background) {
+      hudAt = time;
+      const now = performance.now();
+      const stunned = (id: string) => Math.max(0, Math.ceil(((stunnedUntil.get(id) ?? 0) - now) / 1000));
+      const panic = (id: string) => Math.max(0, Math.ceil(((amokOf.get(id) ?? 0) - now) / 1000));
+      const roster: RosterRow[] = [
+        { id: myId, name: myName, color: myColor, mode: sim.mode, me: true, score: roundResults?.get(myId) ?? score(sim.growth), myBot: false, stunned: stunned(myId), panic: panic(myId) },
+      ];
+      for (const [id, pl] of players) {
+        const r = remotes.get(id);
+        const myBot = bots.some((b) => b.serverId === id);
+        roster.push({ id, name: pl.name, color: pl.color, mode: r?.mode ?? 'surface', me: false, score: roundResults?.get(id) ?? score(r?.size ?? 1), myBot, stunned: stunned(id), panic: panic(id) });
+      }
+      const speed = seedFactor();
+      const seedLeft = seedCharges.reduce((m, c) => Math.max(m, c.until), 0);
+      updateHud({
+        web: webShakes,
+        grip: gripOnMe ?? '',
+        ants: antsOnMe,
+        roster: JSON.stringify(roster),
+        seedBoost: seedLeft ? Math.max(0, Math.ceil((seedLeft - performance.now()) / 1000)) : 0,
+        seedMul: Math.round(speed * 100) / 100,
+      });
     }
-    updateHud({ web: webShakes, grip: gripOnMe ?? '', ants: antsOnMe, roster: JSON.stringify(roster), seedBoost: Math.max(0, Math.ceil((seedBoostUntil - performance.now()) / 1000)) });
 
     fpsFrames++;
     fpsT += clockDt;
@@ -940,14 +1108,14 @@ export function startEngine(o: EngineOptions): Engine {
       sendT = 0;
       const p: number[] = [];
       for (const v of sim.disp) p.push(r3(v.x), r3(v.y), r3(v.z));
-      net.send({ t: 's', p, m: sim.mode, g: r3(sim.growth), w: r3(sim.wave), fx: r3(sim.fx), k: webShakes ? 1 : 0 });
+      net.send({ t: 's', p, m: sim.mode, g: r3(sim.growth), w: r3(sim.wave), fx: r3(sim.fx), k: webShakes ? 1 : 0, sp: r3(seedFactor()) });
     }
     flushT += dt;
     if (flushT > 0.25) {
       flushT = 0;
       flushTunnelPts();
     }
-    renderer.render(scene, camera);
+    if (!background) renderer.render(scene, camera);
     perfMs += performance.now() - t0;
     if (++perfN > 120) {
       perfMs /= 2;
@@ -961,6 +1129,7 @@ export function startEngine(o: EngineOptions): Engine {
     const w = window as unknown as Record<string, unknown>;
     w.__wormFly = () => {
       sim.startVictory(faceCamera());
+      later(3300, startOverview);
       later(4600, () => updateHud({ winner: myName, winnerMe: true }));
     };
     w.__wormPoints = (n: number) => {
@@ -986,10 +1155,19 @@ export function startEngine(o: EngineOptions): Engine {
     webShakes = 0;
     webFreeUntil = 0;
     amokUntil = 0;
+    seedCharges = [];
+    seedPending = -1;
   }
 
   const restartRound = (dir?: THREE.Vector3) => {
     updateHud({ winner: '', winnerMe: false });
+    roundResults = null; // the board shows the new round
+    // our bots waited for this (after a win): they start the round with us, from 0
+    for (const b of bots) b.newRound(freeSpot(true));
+    // a new round: fly from wherever the camera is (the overview of the fruit, or play) down to the worm
+    overview = null;
+    introFrom = { pos: camera.position.clone(), q: camera.quaternion.clone() };
+    introAt = time - INTRO_HOLD;
     // a fresh start: nothing holds on from before
     clearAfflictions();
     frozenUntil = 0;
@@ -1012,6 +1190,7 @@ export function startEngine(o: EngineOptions): Engine {
     dispose() {
       alive = false;
       cancelAnimationFrame(raf);
+      ticker.terminate();
       for (const id of timers) clearTimeout(id);
       removeBots();
       net.close();
@@ -1033,6 +1212,7 @@ export function startEngine(o: EngineOptions): Engine {
       disposeWormView(myView);
       fruitGeo.dispose();
       fruitMat.dispose();
+      backdropMat.dispose();
       model?.map?.dispose();
       skyTex?.dispose();
       (scene.environment as THREE.Texture | null)?.dispose();
