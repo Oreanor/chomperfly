@@ -58,6 +58,8 @@ The server prints the local network address. A friend on the same Wi-Fi opens it
 
 For players outside your network the simplest free option is a tunnel from your PC, e.g. `cloudflared tunnel --url http://localhost:3000`. To keep it running without your PC you need a host with a long-running Node process and WebSockets (a VPS, Railway, Render…). Serverless platforms like Vercel won't work: they don't keep WebSocket connections open.
 
+Environment variables: `PORT` (default 3000), `HOST` (address to listen on, default `0.0.0.0`) and `NEXT_PUBLIC_BASE_PATH` to serve the game from a subdirectory, e.g. `/chomperfly` (then the page is at `/chomperfly`, the API at `/chomperfly/api/*`, the WebSocket at `/chomperfly/ws`). The base path is built into the client, so set it for both `npm run build` and `npm start`. Behind a reverse proxy, pass the request path through unchanged (with the prefix) and allow WebSocket upgrades.
+
 ## Adding a fruit (map)
 
 1. Put a GLB model at `public/fruits/<name>.glb`. The stem should point up (+Y). The shape must be "star-shaped": every ray from the center hits the surface once (apple, pear, plum, orange are fine; a banana is not).

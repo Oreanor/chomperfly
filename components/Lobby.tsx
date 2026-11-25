@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BinIcon, Button, Field, IconButton, Input, Panel, Segmented, Select, Toast } from '@/components/ui';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { filterNameInput } from '@/lib/name';
+import { withBase } from '@/lib/paths';
 import type { RoomInfo } from '@/lib/game/engine';
 
 const FRUIT_NAMES: Record<string, I18nKey> = { apple: 'fruit.apple', pear: 'fruit.pear', peach: 'fruit.peach', pomegranate: 'fruit.pomegranate' };
@@ -41,7 +42,7 @@ export default function Lobby({ name, notice, onJoin, onSettings }: Props) {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      fetch('/api/rooms')
+      fetch(withBase('/api/rooms'))
         .then((r) => r.json())
         .then((list: RoomInfo[]) => {
           if (!alive) return;
@@ -55,7 +56,7 @@ export default function Lobby({ name, notice, onJoin, onSettings }: Props) {
         .catch(() => {});
     load();
     const id = setInterval(load, 2000);
-    fetch('/api/fruits')
+    fetch(withBase('/api/fruits'))
       .then((r) => r.json())
       .then((list: string[]) => {
         if (!alive) return;
@@ -76,7 +77,7 @@ export default function Lobby({ name, notice, onJoin, onSettings }: Props) {
   const closeRoom = async (id: string) => {
     const key = roomKeys[id];
     if (!key) return;
-    const res = await fetch(`/api/rooms/${id}?key=${key}`, { method: 'DELETE' }).catch(() => null);
+    const res = await fetch(withBase(`/api/rooms/${id}?key=${key}`), { method: 'DELETE' }).catch(() => null);
     if (res && (res.ok || res.status === 404)) {
       forgetRoomKey(id);
       setRoomKeys(loadRoomKeys());
@@ -86,7 +87,7 @@ export default function Lobby({ name, notice, onJoin, onSettings }: Props) {
   const create = async () => {
     setBusy(true);
     try {
-      const res = await fetch('/api/rooms', {
+      const res = await fetch(withBase('/api/rooms'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: roomName.trim() || t('lobby.defaultRoom', { name }), fruit, max: Number(max), win: Number(win) }),

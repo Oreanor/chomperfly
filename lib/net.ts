@@ -1,4 +1,5 @@
 import type { ClientMsg } from './protocol';
+import { wsUrl } from './paths';
 
 // what the server sends: many kinds, read field by field (and checked) where they're handled
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -13,7 +14,7 @@ export function connectNet(room: string, name: string, onMsg: (m: NetMsg) => voi
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const open = () => {
-    const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?room=' + encodeURIComponent(room) + '&name=' + encodeURIComponent(name) + (isBot ? '&bot=1' : '');
+    const url = wsUrl('/ws?room=') + encodeURIComponent(room) + '&name=' + encodeURIComponent(name) + (isBot ? '&bot=1' : '');
     onStatus('connecting');
     ws = new WebSocket(url);
     ws.onopen = () => onStatus('online');

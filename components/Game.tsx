@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadAppleModel, loadPitModel } from '@/lib/appleModel';
 import { fruitSpec } from '@/lib/fruits';
+import { withBase } from '@/lib/paths';
 import { startEngine, type Engine, type HudState, type RoomInfo } from '@/lib/game/engine';
 import { cleanName } from '@/lib/name';
 import GameUI from '@/components/GameUI';
@@ -107,7 +108,7 @@ export default function Game() {
   useEffect(() => {
     if (!name || !room) return;
     let cancelled = false;
-    loadAppleModel(`/fruits/${room.fruit}.glb`, fruitSpec(room.fruit).upsideDown)
+    loadAppleModel(withBase(`/fruits/${room.fruit}.glb`), fruitSpec(room.fruit).upsideDown)
       .catch((e) => {
         console.warn(`${room.fruit}.glb not loaded, using the built-in shape`, e);
         return null;
@@ -115,7 +116,7 @@ export default function Game() {
       .then(async (model) => {
         // a fruit with a pit (lib/fruits.json) has it as an obstacle instead of seeds
         const pitFile = fruitSpec(room.fruit).pit;
-        const pit = model && pitFile ? await loadPitModel(`/fruits/${pitFile}`, model.geometry).catch(() => null) : null;
+        const pit = model && pitFile ? await loadPitModel(withBase(`/fruits/${pitFile}`), model.geometry).catch(() => null) : null;
         if (cancelled || !mountRef.current) return;
         engineRef.current = startEngine({
           mount: mountRef.current,

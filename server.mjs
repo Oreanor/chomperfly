@@ -7,9 +7,11 @@ import { randomBytes } from 'node:crypto';
 import next from 'next';
 import { WebSocketServer } from 'ws';
 import { PENALTY_MS, touchesFlank } from './lib/bite.mjs';
+import { BASE_PATH } from './lib/basePath.mjs';
 
 const dev = !process.argv.includes('--prod');
 const port = Number(process.env.PORT) || 3000;
+const listenHost = process.env.HOST || '0.0.0.0';
 const MAX_POINTS = 3_000_000; // tunnel numbers per room
 // the rules shared with the game (lib/rules.json)
 const RULES = JSON.parse(readFileSync(new URL('./lib/rules.json', import.meta.url), 'utf8'));
@@ -315,12 +317,25 @@ function json(res, code, data) {
   res.end(JSON.stringify(data));
 }
 
+/**
+ * The request's path without the base path ('/chomperfly/api/rooms' -> '/api/rooms'),
+ * or null when it lies outside the base path.
+ */
+function localPath(url = '/') {
+  if (!BASE_PATH) return url;
+  if (url === BASE_PATH) return '/';
+  return url.startsWith(BASE_PATH + '/') || url.startsWith(BASE_PATH + '?') ? url.slice(BASE_PATH.length) : null;
+}
+
 function api(req, res) {
-  if (req.url === '/api/fruits' && req.method === 'GET') return json(res, 200, listFruits());
-  if (req.url === '/api/rooms' && req.method === 'GET') {
+  const url = localPath(req.url);
+  // anything but the lobby API goes to Next.js with its original URL (Next knows the base path itself)
+  if (url === null || !url.startsWith('/api/')) return handle(req, res);
+  if (url === '/api/fruits' && req.method === 'GET') return json(res, 200, listFruits());
+  if (url === '/api/rooms' && req.method === 'GET') {
     return json(res, 200, [...rooms.values()].map(roomInfo).sort((a, b) => b.players - a.players));
   }
-  if (req.url === '/api/rooms' && req.method === 'POST') {
+  if (url === '/api/rooms' && req.method === 'POST') {
     let body = '';
     req.on('data', (c) => {
       body += c;
@@ -338,7 +353,7 @@ function api(req, res) {
     return;
   }
   // DELETE /api/rooms/<id>?key=<key>: the creator closes the room; anyone inside goes back to the lobby
-  const del = req.method === 'DELETE' && /^\/api\/rooms\/([0-9a-f]{6})\?key=([0-9a-f]{24})$/.exec(req.url || '');
+  const del = req.method === 'DELETE' && /^\/api\/rooms\/([0-9a-f]{6})\?key=([0-9a-f]{24})$/.exec(url);
   if (del) {
     const room = rooms.get(del[1]);
     if (!room) return json(res, 404, { error: 'no such room' });
@@ -357,19 +372,21 @@ function api(req, res) {
 const server = createServer(api);
 const nextUpgrade = app.getUpgradeHandler();
 server.on('upgrade', (req, socket, head) => {
-  if (req.url && req.url.startsWith('/ws')) {
+  const url = localPath(req.url);
+  if (url === null) return socket.destroy(); // outside the base path: nothing of ours
+  if (url === '/ws' || url.startsWith('/ws?')) {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   } else {
     nextUpgrade(req, socket, head);
   }
 });
 
-server.listen(port, '0.0.0.0', () => {
-  console.log(`\n  Worm-in-apple ready (${dev ? 'dev' : 'prod'})`);
-  console.log(`  local:   http://localhost:${port}`);
+server.listen(port, listenHost, () => {
+  console.log(`\n  Worm-in-apple ready (${dev ? 'dev' : 'prod'})${BASE_PATH ? ` at ${BASE_PATH}` : ''}`);
+  console.log(`  local:   http://localhost:${port}${BASE_PATH}`);
   for (const list of Object.values(networkInterfaces())) {
     for (const a of list || []) {
-      if (a.family === 'IPv4' && !a.internal) console.log(`  network: http://${a.address}:${port}`);
+      if (a.family === 'IPv4' && !a.internal) console.log(`  network: http://${a.address}:${port}${BASE_PATH}`);
     }
   }
   console.log('');

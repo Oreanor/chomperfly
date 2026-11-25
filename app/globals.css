@@ -45,7 +45,7 @@ body { font-family: var(--ui-font); color: var(--ui-fg); }
   position: absolute;
   inset: 0;
   background-color: #5b9fd4;
-  background-image: url(/chomperfly-orchard.jpg);
+  background-image: url(../public/chomperfly-orchard.jpg);
   background-repeat: no-repeat;
   background-position: center center;
   background-size: cover;

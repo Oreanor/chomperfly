@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withBase } from '@/lib/paths';
 
 /** Loads /sky/<fruit>.jpg (or .png). Calls onLoad only if a panorama exists. */
 export async function loadFruitSky(fruit: string, onLoad: (tex: THREE.Texture) => void) {
@@ -6,7 +7,7 @@ export async function loadFruitSky(fruit: string, onLoad: (tex: THREE.Texture) =
   for (const file of [`${fruit}.jpg`, `${fruit}.png`, 'apple.jpg']) {
     let res: Response;
     try {
-      res = await fetch(`/sky/${file}`);
+      res = await fetch(withBase(`/sky/${file}`));
     } catch {
       continue;
     }
