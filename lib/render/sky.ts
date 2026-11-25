@@ -72,7 +72,7 @@ export class SkyDome {
   constructor(scene: THREE.Scene, radius: number) {
     this.radius = radius;
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uMap: { value: null }, uLod: { value: 2 }, uIntensity: { value: 0.9 } },
+      uniforms: { uMap: { value: null }, uLod: { value: 2 }, uIntensity: { value: 0.9 }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uMoon: { value: 0 } },
       vertexShader: /* glsl */ `
         varying vec3 vDir;
         void main() {
@@ -83,6 +83,8 @@ export class SkyDome {
         uniform sampler2D uMap;
         uniform float uLod;
         uniform float uIntensity;
+        uniform vec3 uTint;
+        uniform float uMoon;
         varying vec3 vDir;
         void main() {
           vec3 d = normalize(vDir);
@@ -107,7 +109,20 @@ export class SkyDome {
             vec3 soft = textureLod(uMap, uv, uLod + 3.0).rgb;
             c = mix(c, mix(soft, ring, smoothstep(0.85, 0.99, abs(d.y))), pole);
           }
-          gl_FragColor = vec4(c * uIntensity, 1.0);
+          vec3 graded = c * uTint;
+          // the daylight photo is too bright to tint: crush it into a dark blue night, and keep
+          // white only for the sun's core, which then reads as the moon. Clouds stay dim, not snow.
+          if (uMoon > 0.0) {
+            float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            float L = pow(clamp(luma, 0.0, 1.0), 1.45);
+            // a night glade, not a black sky: trees stay dim blue, and only the sun's core is the moon
+            float hot = smoothstep(0.95, 0.995, luma);
+            vec3 moon = mix(vec3(0.03, 0.05, 0.13), vec3(0.08, 0.14, 0.30), smoothstep(0.05, 0.45, L));
+            moon = mix(moon, vec3(0.15, 0.24, 0.42), smoothstep(0.42, 0.78, L));
+            moon = mix(moon, vec3(0.70, 0.82, 1.0), hot);
+            graded = mix(graded, moon, uMoon);
+          }
+          gl_FragColor = vec4(graded * uIntensity, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
@@ -131,6 +146,13 @@ export class SkyDome {
     tex.needsUpdate = true;
     this.mat.uniforms.uMap.value = tex;
     this.mesh.visible = true;
+  }
+
+  /** The time of day: the panorama tinted and dimmed; moon 1 turns it into a moonlit night. */
+  setTint(tint: [number, number, number], intensity: number, moon = 0) {
+    this.mat.uniforms.uTint.value.set(...tint);
+    this.mat.uniforms.uIntensity.value = intensity;
+    this.mat.uniforms.uMoon.value = moon;
   }
 
   /** blur 0…0.5 like scene.backgroundBlurriness; the dome grows if the camera backs out of it. */
