@@ -33,8 +33,10 @@ type ModalProps = {
   footer?: ReactNode;
   onClose?: () => void; // omit to make the modal mandatory
   onSubmit?: () => void; // Enter submits
+  width?: number; // px (the default is in the CSS)
+  center?: boolean; // title and body centred
 };
-export function Modal({ open, title, children, footer, onClose, onSubmit }: ModalProps) {
+export function Modal({ open, title, children, footer, onClose, onSubmit, width, center }: ModalProps) {
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -55,13 +57,18 @@ export function Modal({ open, title, children, footer, onClose, onSubmit }: Moda
         role="dialog"
         aria-modal="true"
         className={s.modal}
+        style={width ? { width: `min(${width}px, 100%)` } : undefined}
         onSubmit={(e) => {
           e.preventDefault();
           onSubmit?.();
         }}
       >
-        <h2 className={s.modalTitle}>{title}</h2>
-        <div className={s.modalBody}>{children}</div>
+        <h2 className={s.modalTitle} style={center ? { textAlign: 'center' } : undefined}>
+          {title}
+        </h2>
+        <div className={s.modalBody} style={center ? { textAlign: 'center', alignItems: 'center' } : undefined}>
+          {children}
+        </div>
         {footer && <div className={s.modalFooter}>{footer}</div>}
       </form>
     </div>
@@ -82,9 +89,9 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input className={s.input} {...props} />;
 }
 
-export function Select({ options, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: ReactNode }[] }) {
+export function Select({ options, className, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: ReactNode }[] }) {
   return (
-    <select className={`${s.input} ${s.select}`} {...rest}>
+    <select className={cx(s.input, s.select, className)} {...rest}>
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}

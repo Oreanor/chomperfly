@@ -38,7 +38,18 @@ html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hi
   --ui-focus: #f29c00;
 }
 
-body { font-family: var(--ui-font); color: var(--ui-fg); }
+body {
+  font-family: var(--ui-font);
+  color: var(--ui-fg);
+  /* a game: no text selection on double clicks and drags (except in fields) */
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+input,
+textarea,
+[contenteditable] {
+  user-select: text;
+}
 
 /* Lobby key art (4:3): fills the screen, a wider one (16:9) crops it evenly at the top and the bottom. */
 .lobbyBg {
@@ -56,4 +67,22 @@ body { font-family: var(--ui-font); color: var(--ui-fg); }
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
+* { scrollbar-color: var(--ui-border) transparent; scrollbar-width: thin; }
+
+/* the lobby's compact selects (in a row of four) */
+select.lobbyCompact {
+  font-size: 14px;
+  padding: 7px 22px 7px 9px;
+  background-position: right 7px center;
+  min-width: 0;
+  width: 100%;
+}
+.lobbyRow label > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

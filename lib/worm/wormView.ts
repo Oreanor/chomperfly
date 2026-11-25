@@ -19,13 +19,14 @@ const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25
 const pupilGeo = new THREE.SphereGeometry(0.13, 12, 8);
 const pupilMat = new THREE.MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.15 });
 
-// victory wings (a rounded leaf shape) and antennae, in ball-radius units
+// victory wings (a butterfly's: broad, rounded) and antennae, in ball-radius units
 const wingGeo = (() => {
   const s = new THREE.Shape();
-  s.moveTo(0, 0);
-  s.bezierCurveTo(0.6, 1.4, 3.2, 1.6, 3.6, 0.4);
-  s.bezierCurveTo(3.8, -0.6, 1.4, -0.9, 0, 0);
-  return new THREE.ShapeGeometry(s, 24).scale(1.8, 2.3, 1); // long and tall
+  s.moveTo(0, 0.1);
+  s.bezierCurveTo(0.2, 0.95, 0.85, 1.75, 1.7, 1.6);
+  s.quadraticCurveTo(2.05, 0.1, 1.85, -1.5);
+  s.bezierCurveTo(1.15, -1.7, 0.3, -0.55, 0, -0.1);
+  return new THREE.ShapeGeometry(s, 20).scale(2.7, 3.15, 1);
 })();
 const wingMat = new THREE.MeshStandardMaterial({
   color: 0xdcefff, roughness: 0.15, transparent: true, opacity: 0.88, side: THREE.DoubleSide, emissive: 0x2a3b4c,
@@ -53,12 +54,12 @@ export function makeWormView(color: number, scene: THREE.Scene): WormView {
     e.add(pupil);
     segs[N - 1].add(e);
   }
-  // two pairs of wings grow out of the back: big ones up front, smaller ones behind, tilted down a bit.
+  // two pairs of wings grow out of the back: the front pair tilted forward, the rear one back.
   // Each pivot flaps around the body axis.
   const wings: THREE.Object3D[] = [];
   for (const pair of [
-    { seg: N - 3, size: 1, tilt: 0.25 },
-    { seg: N - 5, size: 0.75, tilt: -0.35 },
+    { seg: N - 3, size: 1.05, tilt: 0.42 },
+    { seg: N - 4, size: 1, tilt: -0.5 },
   ]) {
     for (const side of [-1, 1]) {
       const pivot = new THREE.Group();
@@ -89,6 +90,7 @@ export function makeWormView(color: number, scene: THREE.Scene): WormView {
   }
   antennae.visible = false;
   segs[N - 1].add(antennae);
+  for (const m of segs) m.castShadow = true;
   scene.add(group);
   return { group, segs, mats: [base, alt], wings, antennae };
 }
@@ -104,6 +106,24 @@ export function setStunGlow(v: WormView, until: number) {
   const left = until - performance.now();
   const k = left > 0 ? 0.35 + 0.3 * Math.sin(performance.now() / 90) : 0;
   for (const m of v.mats) m.emissive.setRGB(k, 0, 0);
+}
+
+/** Untouchable (it ate a seed): shimmers through the rainbow; off: back to its own colour. */
+export function setRainbow(v: WormView, on: boolean, color: number) {
+  const was = !!v.group.userData.rainbow;
+  if (!on) {
+    if (was) {
+      setWormColor(v, color);
+      v.group.userData.rainbow = false;
+    }
+    return;
+  }
+  v.group.userData.rainbow = true;
+  const hue = ((performance.now() / 1000) * 0.45) % 1;
+  for (const m of v.mats) {
+    m.color.setHSL(hue, 0.9, 0.66);
+    m.emissive.setHSL(hue, 0.9, 0.22);
+  }
 }
 
 export function setWormColor(v: WormView, color: number) {
@@ -211,9 +231,24 @@ function poseVictory(v: WormView, fx: number) {
   }
 }
 
-/** Places the balls along pos[]; ups[] are their "up" directions (null → away from the fruit center). */
-/** gulp: how big the swallowing wave swells (1 = normal; a panicking worm gulps huge chunks). */
-export function poseWorm(v: WormView, pos: THREE.Vector3[], ups: THREE.Vector3[] | null, size = 1, wave = -1, fx = -1, gulp = 1) {
+/**
+ * Breathing (the middle swells and shrinks a little, always), a sigh (sigh 0…1: the middle fills up),
+ * a wobble (wobble 0…1: the middle balls quiver, as after a fall).
+ */
+function breath(k: number, time: number, wobble: number, sigh: number) {
+  const fromMid = Math.abs(k - (N - 1) / 2);
+  let s = fromMid < 2.5 ? 0.03 * Math.sin(time * 1.6 - k * 0.3) : 0;
+  if (fromMid < 4) s += 0.35 * sigh * (1 - fromMid / 4);
+  if (wobble <= 0 || fromMid > 1.5) return 1 + s;
+  return 1 + s + Math.sin(time * 7.5 + k * 1.9) * (0.1 + 0.06 * Math.sin(k * 2.7)) * wobble;
+}
+
+/**
+ * Places the balls along pos[]; ups[] are their "up" directions (null → away from the fruit center).
+ * gulp: how big the swallowing wave swells (1 = normal; a panicking worm gulps huge chunks).
+ */
+export function poseWorm(v: WormView, pos: THREE.Vector3[], ups: THREE.Vector3[] | null, size = 1, wave = -1, fx = -1, gulp = 1, wobble = 0, sigh = 0) {
+  const time = performance.now() / 1000;
   poseVictory(v, fx);
   for (let k = 0; k < N; k++) {
     const m = v.segs[k];
@@ -225,6 +260,6 @@ export function poseWorm(v: WormView, pos: THREE.Vector3[], ups: THREE.Vector3[]
     }
     m.position.copy(pos[k]);
     // round balls overlap along the body
-    m.scale.setScalar(RADII[k] * girth(size) * pulseAt(k, wave, gulp));
+    m.scale.setScalar(RADII[k] * girth(size) * pulseAt(k, wave, gulp) * breath(k, time, wobble, sigh));
   }
 }

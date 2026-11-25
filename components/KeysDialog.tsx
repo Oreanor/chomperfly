@@ -24,12 +24,14 @@ export default function KeysDialog({ open, onClose }: { open: boolean; onClose: 
         <Hint keys={['A', 'D']} text={t('key.turn')} />
         <Hint keys={['S']} text={t('key.rear')} />
         <Hint keys={[t('space')]} text={t('key.jump')} />
-        <Hint keys={[t('lmb')]} text={t('key.dig')} />
-        <Hint keys={[t('rmb')]} text={t('key.hit')} />
+        <Hint keys={[t('lmb'), 'WW']} text={t('key.dig')} />
+        <Hint keys={[t('rmb'), 'Alt']} text={t('key.hit')} />
         <Hint keys={['←', '→']} text={t('key.orbit')} />
         <Hint keys={['↑', '↓', t('wheel')]} text={t('key.zoom')} />
         <Hint keys={['V']} text={t('key.reset')} />
         <Hint keys={['X']} text={t('key.xray')} />
+        <Hint keys={['T']} text={t('key.light')} />
+        <Hint keys={['E']} text={t('key.leave')} />
         <Hint keys={['B']} text={t('key.bot')} />
         <Hint keys={['R']} text={t('key.restart')} />
         <Hint keys={['N']} text={t('key.settings')} />
