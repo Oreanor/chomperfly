@@ -230,8 +230,7 @@ export function makeBiteMaterial(night: THREE.IUniform<number>) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uNight = night;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>
-uniform float uNight;')
+      .replace('#include <common>', '#include <common>\nuniform float uNight;')
       .replace(
         '#include <color_fragment>',
         /* glsl */ `#include <color_fragment>

@@ -130,7 +130,7 @@ type Ant = {
   qEndAt?: number;
   qGather?: number;
   spar?: number; // an ant and a spider squaring up
-  tauntBy?: number;
+  tauntBy?: string; // the worm taunting this spider
   tauntT?: number;
   tauntScared?: boolean;
   sparT?: number;
