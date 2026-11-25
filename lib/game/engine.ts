@@ -2033,6 +2033,35 @@ export function startEngine(o: EngineOptions): Engine {
   };
   loop();
 
+  // console helpers in development: __worm() state, __wormFly() previews a victory, __wormPoints(25) sets my points
+  if (process.env.NODE_ENV !== 'production') {
+    const w = window as unknown as Record<string, unknown>;
+    w.__wormFly = () => {
+      sim.startVictory(camera.position.clone().sub(sim.head));
+      later(3300, startOverview);
+      later(4600, () => updateHud({ winner: myName, winnerMe: true, end: 'win' }));
+    };
+    w.__wormPoints = (n: number) => {
+      sim.growth = 1 + n / 100;
+    };
+    w.__botPoints = (n: number) => bots.forEach((b) => b.setPoints(n));
+    w.__perf = () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, px: [renderer.domElement.width, renderer.domElement.height] });
+    w.__worm = () => ({
+      mode: sim.mode,
+      head: sim.head.toArray().map(r3),
+      cam: camera.position.toArray().map(r3),
+      time: r3(time),
+      introAt: r3(introAt),
+      overview: !!overview,
+      riding,
+      host: isHost,
+      tunnels: tunnels.size,
+      growth: sim.growth,
+      bots: bots.map((b) => b.name),
+      remotes: [...remotes].map(([id, r]) => ({ id, mode: r.mode, size: r.size, visible: r.view.group.visible })),
+    });
+  }
+
   /** A new round: small again (the arena: full life), at `dir` (else a free spot); the camera flies there. */
   const restartRound = (dir?: THREE.Vector3) => {
     roundOver = false;
