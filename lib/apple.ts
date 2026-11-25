@@ -1,7 +1,18 @@
 import * as THREE from 'three';
 
-// Apple radius. The worm is ~0.5 long, so the apple is ~33 worm lengths across.
-export const R0 = 12.5 / 1.5;
+/** The fruit's radius in a room for four. The worm is ~1 long, so that fruit is ~17 worm lengths across. */
+export const R_BASE = 12.5 / 1.5;
+/** This room's fruit radius (set when entering a room; a bigger room has a bigger fruit). */
+export let R0 = R_BASE;
+
+/**
+ * A room's fruit: small (as for 4 players), standard (6), large (8); an old room without a size: by
+ * its player count. The radius grows gently: × (players / 4)^0.4.
+ */
+export function setFruitSize(size: string | undefined, maxPlayers: number) {
+  const players = size === 'small' ? 4 : size === 'large' ? 8 : size === 'standard' ? 6 : maxPlayers;
+  R0 = R_BASE * (Math.max(2, players) / 4) ** 0.4;
+}
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 

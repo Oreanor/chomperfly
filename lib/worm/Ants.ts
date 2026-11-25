@@ -201,7 +201,7 @@ export class AntSim {
   private rules: Level = LEVEL.medium;
   private everyone: WormInfo[] = []; // every worm, untouchable ones too
   private threads = new Map<number, THREE.Vector3[]>(); // spider id → its silk, oldest first
-  private websMoved = false; // a thread was tugged or torn: send them in full
+  websMoved = false; // a thread was tugged or torn: send them in full
   private silkTotal = new Map<number, number>(); // points ever spun, per spider
   private silkSent = new Map<number, number>(); // …of which already sent
   private hits = new Map<string, { done: number; slams: number; need: number }>(); // "<player>:<kind>"
@@ -226,7 +226,7 @@ export class AntSim {
   private digAge = 1;
   private wormSpeed = new Map<string, number>();
   private lastHead = new Map<string, THREE.Vector3>();
-  private websTouched = false;
+  websTouched = false; // …since the host last redrew them
   private millAt = new THREE.Vector3();
   private tmpS = new THREE.Vector3();
   private tmpS2 = new THREE.Vector3();
@@ -924,13 +924,6 @@ export class AntSim {
       out.push([id, total, ...pts.slice(-fresh).flatMap((p) => [r3(p.x), r3(p.y), r3(p.z)])]);
     }
     return out;
-  }
-
-  /** Threads were tugged or torn since the last call (send them in full). */
-  websChanged() {
-    const moved = this.websMoved;
-    this.websMoved = false;
-    return moved;
   }
 
   /** Chaotic: sudden turns, bursts and stops; spins a thread as it goes. */
