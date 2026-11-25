@@ -12,7 +12,8 @@ const CHAMBERS = 6; // pale membranes split a pomegranate into chambers
 /**
  * Seeds to eat inside the fruit: an apple's or a pear's five dark seeds in a star round the core,
  * a pomegranate's hundreds of pearly arils packed between its membranes.
- * Each one eaten is a speed bonus; eaten seeds stay gone until the next round.
+ * Eating one does what the fruit says (lib/fruits.json: points; and a few seconds no one can touch you);
+ * eaten seeds stay gone until the next round.
  */
 export class Seeds {
   readonly positions: THREE.Vector3[] = [];
@@ -27,7 +28,7 @@ export class Seeds {
 
   constructor(scene: THREE.Scene, fruit: string) {
     // what this fruit has: lib/fruits.json
-    const spec = fruitSpec(fruit).seeds ?? { kind: 'star', count: 0, add: 0 };
+    const spec = fruitSpec(fruit).seeds ?? { kind: 'star', count: 0, points: 0 };
     const pomegranate = spec.kind === 'arils';
     const n = spec.count;
     this.eaten = new Array(n).fill(false);
@@ -46,40 +47,46 @@ export class Seeds {
       });
       this.reach = ARIL_LEN * 0.5;
     } else {
-      // teardrop profile: round bottom, pointed tip (+y)
+      // an apple pip: a round bottom (a quarter circle) narrowing to a pointed tip (+y)
       const pts: THREE.Vector2[] = [];
-      for (let i = 0; i <= 16; i++) {
-        const t = i / 16;
-        const r = Math.sin(Math.PI * t) * (1 - 0.55 * t) * 0.32;
-        pts.push(new THREE.Vector2(Math.max(r, 0.001), (t - 0.5) * 1));
+      for (let i = 0; i <= 10; i++) {
+        const a = (i / 10) * (Math.PI / 2);
+        pts.push(new THREE.Vector2(Math.max(0.3 * Math.sin(a), 0.001), -0.5 + 0.35 * (1 - Math.cos(a))));
+      }
+      for (let i = 1; i <= 14; i++) {
+        const t = i / 14;
+        pts.push(new THREE.Vector2(Math.max(0.3 * Math.cos((Math.PI / 2) * t) ** 1.2, 0.001), -0.15 + 0.65 * t));
       }
       this.geo = new THREE.LatheGeometry(pts, 20).scale(SEED_LEN, SEED_LEN, SEED_LEN * 0.75);
-      // dark and glossy: they stand out against the white flesh
-      this.mat = new THREE.MeshStandardMaterial({ color: 0x24110a, roughness: 0.3, metalness: 0.05, fog: false });
+      // brown and glossy: they stand out against the white flesh
+      this.mat = new THREE.MeshStandardMaterial({ color: 0x5b2e15, roughness: 0.3, metalness: 0.05, fog: false });
       this.reach = SEED_LEN * 0.4;
     }
     this.mesh = new THREE.InstancedMesh(this.geo, this.mat, n);
     this.mesh.renderOrder = 6;
     this.mesh.frustumCulled = false;
     if (pomegranate) this.layArils(n);
-    else this.layStar(n);
+    else this.layStar(n, spec.y, spec.size ?? 1);
     this.mesh.instanceMatrix.needsUpdate = true;
     this.group.add(this.mesh);
     if (pomegranate) this.makeMembranes();
     scene.add(this.group);
   }
 
-  /** Five seeds in a star round the fruit's axis, a bit above the middle, nearly upright. */
-  private layStar(n: number) {
-    // in the fruit's widest part (an apple: about the middle; a pear: its lower bulb)
-    const core = new THREE.Vector3(0, widestHeight() + 0.05 * R0, 0);
+  /**
+   * Five seeds in a star round the fruit's axis, nearly upright: at height y × the radius, else a bit
+   * above the fruit's widest part (an apple: about the middle; a pear: its lower bulb). size: × the usual.
+   */
+  private layStar(n: number, y?: number, size = 1) {
+    const core = new THREE.Vector3(0, y !== undefined ? y * R0 : widestHeight() + 0.05 * R0, 0);
+    this.reach *= size;
     const up = new THREE.Vector3(0, 1, 0);
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2;
       const p = core.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), 0.2 * R0);
       while (appleF(p) > -1.5 && p.distanceTo(core) > 0.5) p.lerp(core, 0.15); // well inside, whatever the shape
       const tip = core.clone().sub(p).normalize().multiplyScalar(0.3).add(up).normalize();
-      this.place(k, p, new THREE.Quaternion().setFromUnitVectors(up, tip), 1);
+      this.place(k, p, new THREE.Quaternion().setFromUnitVectors(up, tip), size);
     }
   }
 
@@ -255,7 +262,7 @@ function widestHeight() {
 
 /** An aril: a smooth, slightly lumpy little potato (rounded, a touch longer than wide). */
 function potato() {
-  const g = new THREE.IcosahedronGeometry(0.5, 3);
+  const g = new THREE.IcosahedronGeometry(0.5, 2);
   const pos = g.getAttribute('position');
   const v = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
