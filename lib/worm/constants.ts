@@ -20,7 +20,10 @@ export const WIN_OPTIONS: readonly number[] = RULES.winOptions; // a room's goal
 export const WIN_DEFAULT: number = RULES.winDefault;
 export const WIN_SIZE_GAIN: number = RULES.winSizeGain; // by the win the worm is 1 + this times its starting size, whatever the goal
 export const WIN_GROWTH = 1 + WIN_SIZE_GAIN;
-export const SEED_BONUS_MS: number = RULES.seedBonusMs; // how long one eaten seed speeds you up
+/** How far a worm of this size is on its way to the win: 0 at the start, 1 at the goal. */
+export const winProgress = (growth = 1) => (growth - 1) / WIN_SIZE_GAIN;
+/** From this far on (⅔ of the way to the goal) a worm is "big": it slaps a ladybug off, and so on. */
+export const BIG_AT = 2 / 3;
 const FAT_AT_WIN = 1.6; // and plumper too: by the win its thickness grows this much more than its length
 /** Thickness scale of a worm of this size (grows a bit faster than the length). */
 export const girth = (size: number) => size * (1 + ((FAT_AT_WIN - 1) * Math.max(0, size - 1)) / WIN_SIZE_GAIN);
@@ -29,8 +32,8 @@ export const PULSE_TIME = 0.15; // seconds per ball in the "swallowing" wave
 export const PULSE_AMP = 0.2; // +20% at the peak
 export const PULSE_WIDTH = 2.4; // each ball's swell lasts 2.4 steps, so neighbours overlap
 
-export const TUNNEL_R0 = 0.15;
-export const HOLE_R0 = 0.17;
+export const TUNNEL_R0 = 0.2;
+export const HOLE_R0 = 0.21;
 export const TUNNEL_STEP = 0.03; // distance between stored tunnel points
 
 export const DEFAULT_NAME = 'worm'; // a nameless player (names are always sent; just in case)
@@ -43,6 +46,9 @@ export const smoothstep = (a: number, b: number, x: number) => {
 /** Frame-rate independent smoothing factor. */
 export const damp = (dt: number, k: number) => 1 - Math.exp(-k * dt);
 export const r3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/** Ants hanging on slow a worm down: one ×⅔, two ×½, … */
+export const antsDrag = (ants: number) => 1 / (1 + 0.5 * ants);
 
 /** Spider-venom panic: the speed factor, ×2 at any size. */
 export const amokBoost = (_growth: number) => 2;

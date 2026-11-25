@@ -11,6 +11,7 @@ export type FruitUniforms = {
   uXrayKey: THREE.IUniform<number>; // the X key: the far side too (otherwise it hides the world while inside)
   uInside: THREE.IUniform<number>; // milkier flesh while the worm is inside
   uFlesh: THREE.IUniform<THREE.Color>; // the flesh colour of this fruit
+  uNight: THREE.IUniform<number>; // 1 = moonlight: everything goes bluish (see NIGHT_GLSL)
 };
 
 
@@ -23,6 +24,7 @@ export function makeFruitUniforms(): FruitUniforms {
     uXrayKey: { value: 0 },
     uInside: { value: 0 },
     uFlesh: { value: new THREE.Color(0.97, 0.95, 0.86) },
+    uNight: { value: 0 },
   };
 }
 
@@ -36,6 +38,7 @@ uniform float uXrayKey;
 uniform float uInside;
 uniform float uCutR;
 uniform vec3 uFlesh;
+uniform float uNight;
 float hash3(vec3 p){ p = fract(p*0.3183099 + 0.1); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
 float vnoise(vec3 x){
   vec3 i = floor(x); vec3 f = fract(x); f = f*f*(3.0-2.0*f);
@@ -94,9 +97,17 @@ export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | 
           c = mix(c, vec3(0.9, 0.78, 0.45), smoothstep(0.86, 0.9, dots)*0.55);
           c *= 0.92 + 0.16*vnoise(vOPos*1.3);
         #endif
+          // night: bluish, but as light as the skin was — a red fruit's brightness is in the red, and a plain
+          // luminance would turn it black
+          float ink = max(c.r, max(c.g, c.b));
+          float lum = max(dot(c, vec3(0.299, 0.587, 0.114)), ink * 0.75);
+          vec3 bluish = vec3(lum * 0.62, lum * 0.8, lum * 1.18);
+          c = mix(c, mix(bluish, c, 0.12), uNight);
         } else {
-          c = uFlesh * (0.94 + 0.06*vnoise(vOPos*3.0));
-          totalEmissiveRadiance += c * 0.45; // flesh stays white, not tinted by the sky light
+          // by day the flesh stays its own colour; at night a dusky blue, and it no longer glows white
+          vec3 flesh = mix(uFlesh, uFlesh * vec3(0.55, 0.66, 0.88), uNight);
+          c = flesh * (0.94 + 0.06*vnoise(vOPos*3.0));
+          totalEmissiveRadiance += c * mix(0.45, 0.14, uNight);
         }
         diffuseColor.rgb = c;`,
       )
@@ -113,8 +124,9 @@ export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | 
         // and hides the world, unless it's the X-ray key
         a = min(a, mix(1.0, isOuterSide() ? mix(0.22, 0.32, uInside) : mix(0.0, 0.45, uInside), uXray));
         #ifdef FRUIT_BACKDROP
-          // only the flesh of the far wall, beyond the worm, only while inside without the X-ray key
-          if (uXray * (1.0 - uXrayKey) < 0.5 || isOuterSide() || tt < 0.9) discard;
+          // only the flesh of the far wall (the half of the fruit away from the camera: its edge is the
+          // fruit's own outline, so no second contour), only while inside without the X-ray key
+          if (uXray * (1.0 - uXrayKey) < 0.5 || isOuterSide() || dot(vWPos, normalize(vWPos - cameraPosition)) < 0.0) discard;
           a = 1.0;
         #endif
         if (a < 0.02) discard;
@@ -212,6 +224,22 @@ export function makeBiteGeometry() {
   return geo;
 }
 
-export function makeBiteMaterial() {
-  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2 });
+/** The bitten flesh, bluish at night like the skin. */
+export function makeBiteMaterial(night: THREE.IUniform<number>) {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2 });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uNight = night;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>
+uniform float uNight;')
+      .replace(
+        '#include <color_fragment>',
+        /* glsl */ `#include <color_fragment>
+        float ink = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b));
+        float lum = max(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)), ink * 0.75);
+        vec3 bluish = vec3(lum * 0.62, lum * 0.8, lum * 1.18);
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(bluish, diffuseColor.rgb, 0.12), uNight);`,
+      );
+  };
+  return mat;
 }

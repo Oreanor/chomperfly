@@ -9,12 +9,12 @@ export type Net = { send(m: ClientMsg): void; close(): void };
 
 export type NetStatus = 'connecting' | 'online' | 'offline';
 
-export function connectNet(room: string, name: string, onMsg: (m: NetMsg) => void, onStatus: (s: NetStatus) => void, isBot = false): Net {
+export function connectNet(room: string, name: string, onMsg: (m: NetMsg) => void, onStatus: (s: NetStatus) => void, isBot = false, color?: number): Net {
   let ws: WebSocket | null = null;
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const open = () => {
-    const url = wsUrl('/ws?room=') + encodeURIComponent(room) + '&name=' + encodeURIComponent(name) + (isBot ? '&bot=1' : '');
+    const url = wsUrl('/ws?room=') + encodeURIComponent(room) + '&name=' + encodeURIComponent(name) + (isBot ? '&bot=1' : '') + (color !== undefined ? '&color=' + color.toString(16).padStart(6, '0') : '');
     onStatus('connecting');
     ws = new WebSocket(url);
     ws.onopen = () => onStatus('online');
