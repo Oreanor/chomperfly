@@ -72,12 +72,22 @@ export class SkyDome {
   constructor(scene: THREE.Scene, radius: number) {
     this.radius = radius;
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uMap: { value: null }, uLod: { value: 2 }, uIntensity: { value: 0.9 }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uMoon: { value: 0 } },
+      uniforms: {
+        uMap: { value: null },
+        uLod: { value: 2 },
+        uIntensity: { value: 0.9 },
+        uTint: { value: new THREE.Vector3(1, 1, 1) },
+        uMoon: { value: 0 },
+        uNorth: { value: new THREE.Color() },
+        uSouth: { value: new THREE.Color() },
+      },
       vertexShader: /* glsl */ `
         varying vec3 vDir;
         void main() {
           vDir = position;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          // Keep the dome's parallax and test depth as a background at the far plane.
+          gl_Position.z = gl_Position.w;
         }`,
       fragmentShader: /* glsl */ `
         uniform sampler2D uMap;
@@ -85,6 +95,8 @@ export class SkyDome {
         uniform float uIntensity;
         uniform vec3 uTint;
         uniform float uMoon;
+        uniform vec3 uNorth;
+        uniform vec3 uSouth;
         varying vec3 vDir;
         void main() {
           vec3 d = normalize(vDir);
@@ -102,10 +114,7 @@ export class SkyDome {
           // the poles: the whole panorama squeezes into a point (a "star"); fade to the ring's average colour
           float pole = smoothstep(0.7, 0.97, abs(d.y));
           if (pole > 0.0) {
-            float v = d.y > 0.0 ? 0.93 : 0.07;
-            vec3 ring = vec3(0.0);
-            for (int i = 0; i < 12; i++) ring += textureLod(uMap, vec2((float(i) + 0.5) / 12.0, v), 6.0).rgb;
-            ring /= 12.0;
+            vec3 ring = d.y > 0.0 ? uNorth : uSouth;
             vec3 soft = textureLod(uMap, uv, uLod + 3.0).rgb;
             c = mix(c, mix(soft, ring, smoothstep(0.85, 0.99, abs(d.y))), pole);
           }
@@ -132,7 +141,7 @@ export class SkyDome {
       toneMapped: true,
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 96, 48), this.mat);
-    this.mesh.renderOrder = -100;
+    this.mesh.renderOrder = Infinity; // after opaque geometry, before transparent objects
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;
     scene.add(this.mesh);
@@ -145,7 +154,33 @@ export class SkyDome {
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.needsUpdate = true;
     this.mat.uniforms.uMap.value = tex;
+    this.updatePoleColors(tex);
     this.mesh.visible = true;
+  }
+
+  private updatePoleColors(tex: THREE.Texture) {
+    const img = tex.image as HTMLImageElement;
+    const canvas = document.createElement('canvas');
+    canvas.width = 12;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    if (!ctx || !img.width || !img.height) return;
+    ctx.imageSmoothingQuality = 'high';
+    const bandHeight = Math.min(64, Math.floor(img.height * 0.14) || 1);
+    const sample = new THREE.Color();
+    const poles = [this.mat.uniforms.uNorth.value, this.mat.uniforms.uSouth.value] as THREE.Color[];
+    for (const [index, color] of poles.entries()) {
+      const v = index === 0 ? 0.07 : 0.93; // canvas Y is flipped relative to texture V
+      ctx.clearRect(0, 0, canvas.width, 1);
+      ctx.drawImage(img, 0, Math.max(0, v * img.height - bandHeight / 2), img.width, bandHeight, 0, 0, canvas.width, 1);
+      const pixels = ctx.getImageData(0, 0, canvas.width, 1).data;
+      color.setRGB(0, 0, 0);
+      for (let i = 0; i < pixels.length; i += 4) {
+        sample.setRGB(pixels[i] / 255, pixels[i + 1] / 255, pixels[i + 2] / 255, THREE.SRGBColorSpace);
+        color.add(sample);
+      }
+      color.multiplyScalar(1 / canvas.width);
+    }
   }
 
   /** The time of day: the panorama tinted and dimmed; moon 1 turns it into a moonlit night. */

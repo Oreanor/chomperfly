@@ -277,6 +277,9 @@ export function startEngine(o: EngineOptions): Engine {
     panoramaSun = sunDirFromPanorama(tex);
     skyLoaded = true;
     applyLight();
+    warmFruitShaders();
+    tunnels.warmShaders(renderer, camera);
+    holes.warmShaders(renderer, camera);
   });
 
   // ---------- the time of day ----------
@@ -327,16 +330,25 @@ export function startEngine(o: EngineOptions): Engine {
   fruitUniforms.uNight.value = night;
   fog.color.copy(fleshColor);
   const fruitGeo = model ? model.geometry : proceduralFruitGeometry();
-  const fruitMat = makeFruitMaterial(fruitUniforms, model?.map ?? null);
-  const fruitMesh = new THREE.Mesh(fruitGeo, fruitMat);
+  const surfaceMat = makeFruitMaterial(fruitUniforms, model?.map ?? null, 'surface');
+  const cutawayMat = makeFruitMaterial(fruitUniforms, model?.map ?? null, 'cutaway');
+  const fruitMesh = new THREE.Mesh(fruitGeo, surfaceMat);
   fruitMesh.renderOrder = 10;
   fruitMesh.receiveShadow = true;
   scene.add(fruitMesh);
   // inside: the far wall stays solid flesh and hides the outside world (drawn first, behind everything inside)
-  const backdropMat = makeFruitMaterial(fruitUniforms, model?.map ?? null, true);
+  const backdropMat = makeFruitMaterial(fruitUniforms, model?.map ?? null, 'backdrop');
   const fruitBackdrop = new THREE.Mesh(fruitGeo, backdropMat);
   fruitBackdrop.renderOrder = -5;
+  fruitBackdrop.visible = false;
   scene.add(fruitBackdrop);
+  function warmFruitShaders() {
+    // Compile both transition materials with the panorama and room lights before their first use.
+    const mesh = new THREE.Mesh(fruitGeo, cutawayMat);
+    renderer.compile(mesh, camera, scene);
+    mesh.material = backdropMat;
+    renderer.compile(mesh, camera, scene);
+  }
   const extras = model?.stem ? [modelStem(model.stem)] : proceduralStemAndLeaf();
   for (const e of extras) {
     e.traverse((m) => {
@@ -1698,10 +1710,16 @@ export function startEngine(o: EngineOptions): Engine {
     fruitUniforms.uXray.value += ((xray || inside ? 1 : 0) - fruitUniforms.uXray.value) * damp(dt, 3);
     fruitUniforms.uXrayKey.value += (+!!xray - fruitUniforms.uXrayKey.value) * damp(dt, 3);
     fruitUniforms.uInside.value += (inside - fruitUniforms.uInside.value) * damp(dt, 3);
+    const cameraSurface = appleF(camera.position);
+    const xrayBlend = fruitUniforms.uXray.value;
+    // Let the fade finish to within half a percent before switching to opaque skin.
+    const cutaway = inside || xray || cameraSurface < 0 || Math.max(xrayBlend, fruitUniforms.uCut.value) > 0.005;
+    fruitMesh.material = cutaway ? cutawayMat : surfaceMat;
+    fruitBackdrop.visible = xrayBlend * (1 - fruitUniforms.uXrayKey.value) >= 0.5;
     const deep = ((a: number, b: number, x: number) => {
       const k = Math.min(1, Math.max(0, (x - a) / (b - a)));
       return k * k * (3 - 2 * k);
-    })(0.05, -0.4, appleF(camera.position)) * (1 - fruitUniforms.uXray.value);
+    })(0.05, -0.4, cameraSurface) * (1 - xrayBlend);
     fog.near = THREE.MathUtils.lerp(500, 2.5, deep);
     fog.far = THREE.MathUtils.lerp(1000, 18, deep);
     camLight.intensity = (night > 0 ? 1.5 : 2.5) * deep;
@@ -2140,7 +2158,8 @@ export function startEngine(o: EngineOptions): Engine {
       for (const id of [...remotes.keys()]) removeRemote(id);
       disposeWormView(myView);
       fruitGeo.dispose();
-      fruitMat.dispose();
+      surfaceMat.dispose();
+      cutawayMat.dispose();
       backdropMat.dispose();
       model?.map?.dispose();
       skyTex?.dispose();

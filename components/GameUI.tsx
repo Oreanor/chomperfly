@@ -198,24 +198,23 @@ export default function GameUI({ hud, room, onSettings, onRestartRound, confirmR
         <IconButton label={t('settings.title')} onClick={onSettings}>
           ⚙
         </IconButton>
+        {hud.fps > 0 && (
+          <span
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 'calc(100% + 6px)',
+              fontSize: 12,
+              fontVariantNumeric: 'tabular-nums',
+              color: hud.fps < 30 ? '#ff8a7a' : 'var(--ui-fg-muted)',
+              textShadow: '0 1px 3px rgba(0,0,0,0.5)',
+              pointerEvents: 'none',
+            }}
+          >
+            {hud.fps} FPS
+          </span>
+        )}
       </div>
-
-      {hud.fps > 0 && (
-        <span
-          style={{
-            position: 'absolute',
-            right: 12,
-            bottom: 10,
-            fontSize: 12,
-            fontVariantNumeric: 'tabular-nums',
-            color: hud.fps < 30 ? '#ff8a7a' : 'var(--ui-fg-muted)',
-            textShadow: '0 1px 3px rgba(0,0,0,0.5)',
-            pointerEvents: 'none',
-          }}
-        >
-          {hud.fps} FPS
-        </span>
-      )}
 
       {/* what's happening to me */}
       <div style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, pointerEvents: 'none' }}>

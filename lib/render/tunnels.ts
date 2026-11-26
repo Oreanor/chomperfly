@@ -55,6 +55,11 @@ export class TunnelStore {
 
   constructor(private scene: THREE.Scene) {}
 
+  warmShaders(renderer: THREE.WebGLRenderer, camera: THREE.Camera) {
+    // Both sides of the glass are compiled with the room's lighting before the first tunnel appears.
+    renderer.compile(new THREE.Mesh(undefined, this.mat), camera, this.scene);
+  }
+
   get size() {
     return this.tunnels.size;
   }
@@ -389,9 +394,13 @@ export class HoleLayer {
   private fading: { group: THREE.Group; mat: THREE.Material; at: number } | null = null;
   private static Z = new THREE.Vector3(0, 0, 1);
 
-  constructor(scene: THREE.Scene, night: THREE.IUniform<number>) {
+  constructor(private scene: THREE.Scene, night: THREE.IUniform<number>) {
     this.mat = makeBiteMaterial(night);
     scene.add(this.group);
+  }
+
+  warmShaders(renderer: THREE.WebGLRenderer, camera: THREE.Camera) {
+    renderer.compile(new THREE.Mesh(this.geo, this.mat), camera, this.scene);
   }
 
   /** h = [x, y, z, nx, ny, nz, radius?] */

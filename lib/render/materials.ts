@@ -56,16 +56,20 @@ bool isOuterSide(){
 }
 `;
 
-/** Skin outside (model texture or a procedural apple), white flesh inside, cut-away and x-ray. */
 /**
- * backdrop: an opaque copy drawn first that keeps only the far wall's flesh (beyond the worm) while
- * gnawing inside: the near skin goes see-through, the far one hides the world. Off with the X-ray key.
+ * Surface uses only the opaque skin. Cutaway draws both sides as the skin fades, and the backdrop
+ * keeps the far wall opaque when the worm is inside without full X-ray.
  */
-export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | null, backdrop = false) {
-  const mat = backdrop
-    ? new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0, side: THREE.BackSide, map })
-    : new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0, side: THREE.DoubleSide, transparent: true, map });
-  if (backdrop) mat.defines = { FRUIT_BACKDROP: '' };
+export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | null, view: 'surface' | 'cutaway' | 'backdrop') {
+  const mat = new THREE.MeshStandardMaterial({
+    roughness: 0.5,
+    metalness: 0,
+    map,
+    side: view === 'surface' ? THREE.FrontSide : view === 'backdrop' ? THREE.BackSide : THREE.DoubleSide,
+    transparent: view === 'cutaway',
+  });
+  if (view === 'surface') mat.defines.FRUIT_SURFACE = '';
+  if (view === 'backdrop') mat.defines.FRUIT_BACKDROP = '';
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
@@ -79,9 +83,15 @@ export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | 
       .replace(
         '#include <color_fragment>',
         /* glsl */ `#include <color_fragment>
+        #ifdef FRUIT_BACKDROP
+          // Keep the flesh of the far wall; its contour follows the fruit's own outline.
+          if (isOuterSide() || dot(vWPos, vWPos - cameraPosition) < 0.0) discard;
+        #endif
         vec3 dir = normalize(vOPos);
         vec3 c;
+        #ifndef FRUIT_SURFACE
         if (isOuterSide()) {
+        #endif
         #ifdef USE_MAP
           // model texture + a little close-up detail
           c = diffuseColor.rgb * (0.93 + 0.14*vnoise(vOPos*1.3));
@@ -103,17 +113,20 @@ export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | 
           float lum = max(dot(c, vec3(0.299, 0.587, 0.114)), ink * 0.75);
           vec3 bluish = vec3(lum * 0.62, lum * 0.8, lum * 1.18);
           c = mix(c, mix(bluish, c, 0.12), uNight);
+        #ifndef FRUIT_SURFACE
         } else {
           // by day the flesh stays its own colour; at night a dusky blue, and it no longer glows white
           vec3 flesh = mix(uFlesh, uFlesh * vec3(0.55, 0.66, 0.88), uNight);
           c = flesh * (0.94 + 0.06*vnoise(vOPos*3.0));
           totalEmissiveRadiance += c * mix(0.45, 0.14, uNight);
         }
+        #endif
         diffuseColor.rgb = c;`,
       )
       .replace(
         '#include <dithering_fragment>',
         /* glsl */ `#include <dithering_fragment>
+        #if !defined(FRUIT_SURFACE) && !defined(FRUIT_BACKDROP)
         vec3 ab = uWorm - cameraPosition;
         float tt = dot(vWPos - cameraPosition, ab) / max(dot(ab, ab), 1e-5);
         vec3 cp = cameraPosition + ab*clamp(tt, 0.0, 1.0);
@@ -123,14 +136,9 @@ export function makeFruitMaterial(uniforms: FruitUniforms, map: THREE.Texture | 
         // the near wall (seen from outside) goes see-through; the far wall (its flesh side) stays
         // and hides the world, unless it's the X-ray key
         a = min(a, mix(1.0, isOuterSide() ? mix(0.22, 0.32, uInside) : mix(0.0, 0.45, uInside), uXray));
-        #ifdef FRUIT_BACKDROP
-          // only the flesh of the far wall (the half of the fruit away from the camera: its edge is the
-          // fruit's own outline, so no second contour), only while inside without the X-ray key
-          if (uXray * (1.0 - uXrayKey) < 0.5 || isOuterSide() || dot(vWPos, normalize(vWPos - cameraPosition)) < 0.0) discard;
-          a = 1.0;
-        #endif
         if (a < 0.02) discard;
-        gl_FragColor.a *= a;`,
+        gl_FragColor.a *= a;
+        #endif`,
       );
   };
   return mat;
