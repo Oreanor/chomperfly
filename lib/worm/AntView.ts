@@ -186,6 +186,32 @@ export class AntView {
     scene.add(this.group);
   }
 
+  /**
+   * Builds one critter of each kind and compiles their shaders (and paints their canvas textures) up
+   * front, so the first earwig or ladybug to arrive doesn't stall a frame. Then throws them away.
+   */
+  warm(renderer: THREE.WebGLRenderer, camera: THREE.Camera, scene: THREE.Scene) {
+    const made = ([ANT, LADYBUG, SPIDER, EARWIG, CHAFER] as Kind[]).map((kind, i) =>
+      this.make([-1 - i, 0, 0, 0, 0, 0, 0, 1, '', 0, 0, kind, 0, '', 0] as AntSnap),
+    );
+    for (const a of made) a.legs.count = a.joints.count = 1;
+    renderer.compile(this.group, camera, scene);
+    // and send their canvas textures (shells, chitin relief, wings) to the GPU now, not on first sight
+    for (const a of made)
+      a.group.traverse((o) => {
+        const ms = (o as THREE.Mesh).material;
+        for (const m of Array.isArray(ms) ? ms : ms ? [ms] : []) {
+          const p = m as THREE.MeshPhysicalMaterial;
+          for (const t of [p.map, p.bumpMap, p.roughnessMap]) if (t) renderer.initTexture(t);
+        }
+      });
+    for (const a of made) {
+      this.group.remove(a.group);
+      a.legs.dispose();
+      a.joints.dispose();
+    }
+  }
+
   apply(snaps: AntSnap[]) {
     this.snaps = snaps;
     const alive = new Set<number>();

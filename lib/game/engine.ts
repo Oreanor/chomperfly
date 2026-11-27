@@ -280,6 +280,7 @@ export function startEngine(o: EngineOptions): Engine {
     warmFruitShaders();
     tunnels.warmShaders(renderer, camera);
     holes.warmShaders(renderer, camera);
+    antView.warm(renderer, camera, scene);
   });
 
   // ---------- the time of day ----------
@@ -1704,6 +1705,7 @@ export function startEngine(o: EngineOptions): Engine {
     // inside: cut the skin away round the line to the worm, x-ray, the flesh haze
     const inside = +(sim.mode === 'dig' && !overview);
     fruitMesh.receiveShadow = !inside && !xray;
+    for (const e of extras) e.visible = !inside; // the stem and leaf are outside: not seen through the flesh
     fruitUniforms.uWorm.value.copy(sim.head);
     fruitUniforms.uCutR.value = 1.5 * sim.L;
     fruitUniforms.uCut.value += (inside - fruitUniforms.uCut.value) * damp(dt, 3);
