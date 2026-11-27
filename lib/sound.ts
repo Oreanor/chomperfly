@@ -559,6 +559,78 @@ class Sound {
     wob.stop(t + len + 0.02);
   }
 
+  /**
+   * Silk threads stretched: a rustle and a creak — a run of tiny stick-slip catches, faster and higher
+   * the tighter they're pulled (tension 0…1).
+   */
+  creak(p?: THREE.Vector3, tension = 0, vol = 0.3) {
+    const o = this.out(p, vol);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const len = 0.32 + Math.random() * 0.1;
+    // the rustle of silk
+    const rustle = this.noiseSrc();
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 3000;
+    const rg = this.env(t, 0.05, len, 0.25);
+    rustle.connect(hp).connect(rg).connect(node);
+    rustle.start(t, Math.random() * 0.5);
+    rustle.stop(t + len + 0.1);
+    // the creak: catches speeding up as the thread is pulled
+    const rate0 = 28 + 30 * tension;
+    let at = t + 0.02;
+    let k = 0;
+    while (at < t + len) {
+      const u = (at - t) / len;
+      const src = this.noiseSrc();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = (1300 + 1200 * tension) * (1 + 0.35 * u);
+      bp.Q.value = 6;
+      const g = this.env(at, 0.0008, 0.012, 0.5 + 0.5 * Math.sin(Math.PI * u));
+      src.connect(bp).connect(g).connect(node);
+      src.start(at, Math.random() * 0.5);
+      src.stop(at + 0.03);
+      at += 1 / (rate0 * (1 + 0.8 * u)) * (0.85 + Math.random() * 0.3);
+      k++;
+    }
+  }
+
+  /**
+   * The thread snaps — PYN'K: a bright plucked string (like a guitar's top strings), its pitch dropping
+   * a touch as it goes slack.
+   */
+  snapString(p?: THREE.Vector3) {
+    const o = this.out(p, 0.45);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const f = [330, 392, 440, 494][Math.floor(Math.random() * 4)] * 2; // E5…B5: the top strings, high up
+    for (const [mul, amp, decay] of [
+      [1, 1, 0.55],
+      [2, 0.45, 0.3],
+      [3, 0.22, 0.18],
+      [4, 0.1, 0.12],
+    ]) {
+      const osc = ctx.createOscillator();
+      osc.frequency.setValueAtTime(f * mul, t);
+      osc.frequency.exponentialRampToValueAtTime(f * mul * 0.94, t + decay); // goes slack
+      const g = this.env(t, 0.002, decay, amp);
+      osc.connect(g).connect(node);
+      osc.start(t);
+      osc.stop(t + decay + 0.05);
+    }
+    // the snap itself: a sharp click
+    const click = this.noiseSrc();
+    const chp = ctx.createBiquadFilter();
+    chp.type = 'highpass';
+    chp.frequency.value = 2500;
+    const cg = this.env(t, 0.0005, 0.012, 0.8);
+    click.connect(chp).connect(cg).connect(node);
+    click.start(t, Math.random() * 0.5);
+    click.stop(t + 0.03);
+  }
+
   /** Stuck in a web (or tugging at it): the silk twangs. */
   twang(p?: THREE.Vector3, vol = 0.3) {
     const o = this.out(p, vol);

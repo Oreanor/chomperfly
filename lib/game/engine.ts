@@ -1127,8 +1127,10 @@ export function startEngine(o: EngineOptions): Engine {
     let bite = false;
     if (!gripOnMe && webShakes) {
       sim.shake();
-      sound.twang(sim.head, 0.22);
-      if (--webShakes === 0) webFreeUntil = performance.now() + 2500;
+      if (--webShakes === 0) {
+        webFreeUntil = performance.now() + 2500;
+        sound.snapString(sim.head); // PYN'K: the thread snaps, free
+      } else sound.creak(sim.head, 1 - webShakes / WEB_SHAKES); // the threads stretch, tighter each jerk
       return;
     }
     if (gripOnMe && antView.ladybugsBoth(myId)) {
@@ -1747,7 +1749,7 @@ export function startEngine(o: EngineOptions): Engine {
       }
     }
     if (antsOnMe > 0 && Math.random() < dt * (1 + antsOnMe * 0.5)) sound.scurry(sim.head, 0.28);
-    if (webShakes && !soundWeb) sound.twang(sim.head, 0.4);
+    if (webShakes && !soundWeb) sound.creak(sim.head, 0); // caught: a rustle and the creak of threads
     soundWeb = webShakes;
     // critters: ants grunt under a load and squeak in a quarrel, wings buzz, the chafer gallops
     const grunters: THREE.Vector3[] = [];
