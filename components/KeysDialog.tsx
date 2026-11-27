@@ -35,6 +35,7 @@ export default function KeysDialog({ open, onClose }: { open: boolean; onClose: 
         <Hint keys={['B']} text={t('key.bot')} />
         <Hint keys={['R']} text={t('key.restart')} />
         <Hint keys={['N']} text={t('key.settings')} />
+        <Hint keys={['M']} text={t('key.sound')} />
         <Hint keys={['K']} text={t('key.keys')} />
       </div>
     </Modal>

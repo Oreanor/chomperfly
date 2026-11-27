@@ -17,7 +17,8 @@ import { Gnats } from '@/lib/render/gnats';
 import { SunFlare } from '@/lib/render/sunFlare';
 import { LIGHTING, LIGHTS, type LightName } from '@/lib/render/lighting';
 import { freeDir, slotDir } from '@/lib/worm/spawn';
-import { ANT, AntSim, CHAFER, LADYBUG, SPECS, type WormInfo } from '@/lib/worm/Ants';
+import { ANT, AntSim, CARRY, CHAFER, CHASE, HOLD, LADYBUG, QUARREL, SPECS, type WormInfo } from '@/lib/worm/Ants';
+import { sound } from '@/lib/sound';
 import { AntView } from '@/lib/worm/AntView';
 import { SkyDome, loadFruitSky, sunDirFromPanorama } from '@/lib/render/sky';
 import { WormSim, type SimInput } from '@/lib/worm/WormSim';
@@ -439,7 +440,17 @@ export function startEngine(o: EngineOptions): Engine {
     },
   };
   const antView = new AntView(scene);
-  antView.onBite = (p, size, style, follow) => impacts.burst(p, size, style === 'pop', follow);
+  antView.onBite = (p, size, style, follow) => {
+    impacts.burst(p, size, style === 'pop', follow);
+    sound.hit(size, p, style);
+  };
+  sound.install();
+  let soundMode = '';
+  const soundHead = new THREE.Vector3();
+  let soundWeb = 0;
+  let stompIn = 0; // s to the chafer's next footfall
+  let stompStep = 0;
+  const chaferWas = new THREE.Vector3();
   let isHost = false;
   let roundOver = false; // someone won (or the arena wiped out): everyone stops until the next round
   let roundStart = performance.now();
@@ -527,6 +538,7 @@ export function startEngine(o: EngineOptions): Engine {
     },
     impact: (p, kind) => {
       impacts.burst(p, sim.L, kind === 'bite');
+      sound.hit(kind === 'slam' ? 1.5 : 1.1, p, kind === 'bite' ? 'pop' : 'strokes');
       if (kind === 'swat') {
         // a swat from above: worms under it are lashed, critters knocked away
         const reach = 0.42 * sim.L;
@@ -761,8 +773,10 @@ export function startEngine(o: EngineOptions): Engine {
           stunnedUntil.set(m.id, performance.now() + (m.duration || 5000)); // shown in the player list
           {
             const body = bodyOf(m.id);
-            if (body && m.lash) impacts.burst(body.disp[N >> 1], 0.9 * body.size, false, body.disp[N >> 1]);
-            else if (body && (m.by === 'pit' || m.by === 'chafer')) impacts.burst(body.disp[N >> 1], 0.9 * body.size, false, body.disp[N >> 1]);
+            if (body && (m.lash || m.by === 'pit' || m.by === 'chafer')) {
+              impacts.burst(body.disp[N >> 1], 0.9 * body.size, false, body.disp[N >> 1]);
+              sound.hit(0.9 * body.size, body.disp[N >> 1]);
+            }
             else if (body && m.by !== 'spider') {
               // the pop where the biter's head hit
               const head = m.by === myId ? sim.head : remotes.get(m.by)?.disp[N - 1];
@@ -1096,6 +1110,7 @@ export function startEngine(o: EngineOptions): Engine {
     if (sim.mode === 'dig') {
       if (antsOnMe <= 0) return;
       sim.squeeze();
+      sound.crunch(undefined, 3, 0.3);
       if (isHost) antSim.shake(myId);
       else net.send({ t: 'shake' });
       return;
@@ -1105,6 +1120,7 @@ export function startEngine(o: EngineOptions): Engine {
     let bite = false;
     if (!gripOnMe && webShakes) {
       sim.shake();
+      sound.twang(sim.head, 0.22);
       if (--webShakes === 0) webFreeUntil = performance.now() + 2500;
       return;
     }
@@ -1114,19 +1130,29 @@ export function startEngine(o: EngineOptions): Engine {
     }
     if (gripOnMe) {
       if (winProgress(sim.growth) >= BIG_AT) {
-        if (sim.slam(gripOnMe)) slamDoneAt = performance.now() + 446;
+        if (sim.slam(gripOnMe)) {
+          slamDoneAt = performance.now() + 446;
+          sound.whoosh(1.5);
+        }
         return;
       } else if (!sim.whip(gripOnMe === 'head' ? 'tail' : 'head', gripOnMe === 'head')) return;
-    } else if (sim.backflip()) return;
-    else if (sim.rear > 0.55) {
-      sim.flySwat(swatTargets());
+      sound.whoosh(1);
+    } else if (sim.backflip()) {
+      sound.whoosh(0.8);
       return;
-    } else if (antsOnMe > 0) sim.shake();
-    else {
+    } else if (sim.rear > 0.55) {
+      sim.flySwat(swatTargets());
+      sound.whoosh(1.2);
+      return;
+    } else if (antsOnMe > 0) {
+      sim.shake();
+      sound.whoosh(0.45);
+    } else {
       const c = critterAhead(1.1 * sim.L, 0.55);
       bite = !!c;
       if (c) sim.lunge(c.p);
       else sim.swipe();
+      sound.whoosh(1);
       what = 'swat';
       // a worm at my tail end gets lashed
       const victim = (() => {
@@ -1261,6 +1287,10 @@ export function startEngine(o: EngineOptions): Engine {
     }
     if (down && (o.uiBlocked() || e.target instanceof HTMLInputElement)) return;
     if (GAME_KEYS.includes(e.code)) e.preventDefault();
+    if (down && !e.repeat && e.code === 'KeyM') {
+      sound.toggleMute();
+      return;
+    }
     if (down && !e.repeat && e.code === 'KeyN') {
       e.preventDefault();
       if (document.pointerLockElement === canvas) document.exitPointerLock();
@@ -1671,6 +1701,49 @@ export function startEngine(o: EngineOptions): Engine {
     }
   }
 
+  /** The frame's sounds: crossing in and out, chewing, ants at me, the web, critters' voices and wings, gnats, crickets. */
+  function playSounds(dt: number) {
+    sound.listen(camera);
+    if (sim.mode !== soundMode) {
+      if (sim.mode === 'dig' && soundMode === 'surface') sound.crunch(undefined, 5, 0.45);
+      else if (soundMode === 'dig') sound.pop();
+      else if (soundMode === 'fly' && sim.mode === 'surface') sound.thud(undefined, 0.8);
+      soundMode = sim.mode;
+    }
+    // chewing through the flesh, as fast as I go
+    if (sim.mode === 'dig') {
+      const speed = sim.head.distanceTo(soundHead) / Math.max(dt, 1e-3);
+      if (Math.random() < dt * Math.min(7, speed * 2.5)) sound.crunch(undefined, 2, 0.13);
+    }
+    soundHead.copy(sim.head);
+    if (antsOnMe > 0 && Math.random() < dt * (1.2 + antsOnMe * 0.6)) sound.clicks(sim.head, 2 + Math.floor(Math.random() * 2), 1, 0.22);
+    if (webShakes && !soundWeb) sound.twang(sim.head, 0.4);
+    soundWeb = webShakes;
+    // critters: ants grunt under a load and squeak in a quarrel, wings buzz, the chafer gallops
+    const grunters: THREE.Vector3[] = [];
+    const squeakers: THREE.Vector3[] = [];
+    let chafer: THREE.Vector3 | null = null;
+    for (const c of antView.heard()) {
+      if (c.flying) sound.buzz(`c${c.id}`, c.p, c.kind === LADYBUG ? 150 : 120, 0.35);
+      else if (c.kind === CHAFER && (c.state === CHASE || riding)) chafer = c.p;
+      else if (c.kind === ANT && (c.state === HOLD || c.state === CARRY)) grunters.push(c.p);
+      else if (c.kind === ANT && c.state === QUARREL) squeakers.push(c.p);
+    }
+    if (grunters.length && Math.random() < dt * Math.min(2.5, 0.7 * grunters.length)) sound.grunt(grunters[Math.floor(Math.random() * grunters.length)]);
+    if (squeakers.length && Math.random() < dt * Math.min(3, 1.2 * squeakers.length)) sound.squeak(squeakers[Math.floor(Math.random() * squeakers.length)]);
+    stompIn -= dt;
+    const galloping = !!chafer && chafer.distanceTo(chaferWas) / Math.max(dt, 1e-3) > 0.8;
+    if (chafer) chaferWas.copy(chafer);
+    if (chafer && galloping && stompIn <= 0) {
+      // a gallop: ta-da-dum … ta-da-dum
+      const k = stompStep++ % 3;
+      sound.stomp(chafer, riding ? 1 : 0.7, k === 2 ? 1 : 0.75);
+      stompIn = k === 2 ? 0.2 : 0.075;
+    }
+    if (!night && sim.mode !== 'dig') for (const g of gnats.flying()) sound.buzz(`g${g.i}`, g.p, g.close ? 380 : 430, g.close ? 0.45 : 0.18);
+    sound.endFrame(Math.min(1, night), sim.mode === 'dig' ? 1 : 0);
+  }
+
   function frame(hidden: boolean) {
     const t0 = performance.now();
     const realDt = clock.getDelta();
@@ -1761,6 +1834,7 @@ export function startEngine(o: EngineOptions): Engine {
         dropPending = d;
         dropAskedAt = time;
         net.send({ t: 'drop', id: d });
+        sound.bloop();
       }
     }
     flare.update(dt, sim.mode === 'dig', renderer.getPixelRatio());
@@ -1826,6 +1900,7 @@ export function startEngine(o: EngineOptions): Engine {
 
     // ants on me: they drag me (on the skin by the end more of them hold; inside, back along my passage) unless I crawl on
     antsOnMe = riding || sim.mode === 'fly' ? 0 : antView.attachedTo(myId, ANT);
+    playSounds(dt);
     const pulling = antsOnMe && !movingForward;
     dragged += ((pulling ? (sim.mode === 'surface' ? antView.dragBalance(myId) : 1) : 0) - dragged) * damp(dt, 3);
     if (Math.abs(dragged) > 0.3) sim.pullBack(0.12 * Math.abs(dragged) * dt, dragged > 0);
@@ -2056,6 +2131,7 @@ export function startEngine(o: EngineOptions): Engine {
   // console helpers in development: __worm() state, __wormFly() previews a victory, __wormPoints(25) sets my points
   if (process.env.NODE_ENV !== 'production') {
     const w = window as unknown as Record<string, unknown>;
+    w.__sound = sound; // __sound.hit(), __sound.whoosh(), … to hear one
     w.__wormFly = () => {
       sim.startVictory(camera.position.clone().sub(sim.head));
       later(3300, startOverview);
@@ -2147,6 +2223,7 @@ export function startEngine(o: EngineOptions): Engine {
       stars.dispose();
       streaks.dispose();
       gnats.dispose();
+      sound.stopAll();
       drops.dispose();
       flare.dispose();
       webs.dispose();

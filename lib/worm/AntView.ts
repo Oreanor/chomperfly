@@ -186,6 +186,15 @@ export class AntView {
     scene.add(this.group);
   }
 
+  /** For the sounds: each critter shown, what it's doing, and whether its wings are out. */
+  *heard(): Generator<{ id: number; kind: Kind; state: number; p: THREE.Vector3; flying: boolean }> {
+    for (const [id, a] of this.ants) {
+      if (!a.group.visible) continue;
+      const flying = !!(a.fly?.wings[0]?.visible || a.earwig?.wings[0]?.visible);
+      yield { id, kind: a.snap[11], state: a.snap[1], p: a.group.position, flying };
+    }
+  }
+
   /**
    * Builds one critter of each kind and compiles their shaders (and paints their canvas textures) up
    * front, so the first earwig or ladybug to arrive doesn't stall a frame. Then throws them away.

@@ -82,6 +82,11 @@ export class Gnats {
     }
   }
 
+  /** For the buzz: the gnats in the air now (a fly-by close to the lens is flagged). */
+  *flying(): Generator<{ i: number; p: THREE.Vector3; close: boolean }> {
+    for (const [i, g] of this.gnats.entries()) if (g.mode !== 'away' && g.sprite.visible) yield { i, p: g.p, close: g.mode === 'flyby' };
+  }
+
   setNight(on: boolean) {
     this.night = on;
   }
