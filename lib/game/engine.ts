@@ -1742,7 +1742,7 @@ export function startEngine(o: EngineOptions): Engine {
       const was = rubAt.get(id);
       if (!was) rubAt.set(id, head.clone());
       else if (was.distanceTo(head) > 0.5 * (L0 - LC0) * r.size) {
-        sound.rub(head, Math.random() < 0.5, 0.08);
+        sound.rub(head, Math.random() < 0.5, 0.05);
         was.copy(head);
       }
     }

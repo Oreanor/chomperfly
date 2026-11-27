@@ -523,39 +523,40 @@ class Sound {
    * A step on the fruit's skin: rubber squeaking on glass, softly — "wee" (up: the pitch rising, the back
    * pulling up) or "woo" (down: falling, the front stretching on). Stick-slip: a buzzy tone, trembling.
    */
-  rub(p?: THREE.Vector3, up = true, vol = 0.08) {
+  rub(p?: THREE.Vector3, up = true, vol = 0.05) {
     const o = this.out(p, vol);
     if (!o) return;
     const { ctx, t, node } = o;
-    const len = 0.13 + Math.random() * 0.04;
-    const f0 = (up ? 620 : 820) * (0.9 + Math.random() * 0.2);
-    const f1 = up ? f0 * 1.45 : f0 * 0.68;
+    const len = 0.16 + Math.random() * 0.05;
+    const f0 = (up ? 520 : 680) * (0.92 + Math.random() * 0.16);
+    const f1 = up ? f0 * 1.35 : f0 * 0.72;
+    // a soft, round tone (no buzz): a sine with a little triangle for body
     const osc = ctx.createOscillator();
-    osc.type = 'sawtooth';
+    osc.type = 'triangle';
     osc.frequency.setValueAtTime(f0, t);
     osc.frequency.exponentialRampToValueAtTime(f1, t + len);
-    // the stick-slip judder
-    const judder = ctx.createOscillator();
-    judder.frequency.value = 55 + Math.random() * 25;
-    const jg = ctx.createGain();
-    jg.gain.value = 0.45;
+    // a gentle wobble of the rubber (not a judder)
+    const wob = ctx.createOscillator();
+    wob.frequency.value = 22 + Math.random() * 8;
+    const wg = ctx.createGain();
+    wg.gain.value = 0.15;
     const trem = ctx.createGain();
-    trem.gain.value = 0.55;
-    judder.connect(jg).connect(trem.gain);
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = (f0 + f1) * 0.75;
-    bp.Q.value = 2.5;
+    trem.gain.value = 0.85;
+    wob.connect(wg).connect(trem.gain);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1400;
+    lp.Q.value = 0.5;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(1, t + 0.03);
-    g.gain.setValueAtTime(1, t + len * 0.6);
+    g.gain.exponentialRampToValueAtTime(1, t + 0.06); // eases in
+    g.gain.setValueAtTime(1, t + len * 0.5);
     g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-    osc.connect(trem).connect(bp).connect(g).connect(node);
+    osc.connect(trem).connect(lp).connect(g).connect(node);
     osc.start(t);
-    judder.start(t);
+    wob.start(t);
     osc.stop(t + len + 0.02);
-    judder.stop(t + len + 0.02);
+    wob.stop(t + len + 0.02);
   }
 
   /** Stuck in a web (or tugging at it): the silk twangs. */
