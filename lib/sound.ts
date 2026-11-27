@@ -170,12 +170,38 @@ class Sound {
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
       bp.frequency.value = 3200 * pitch * (0.85 + Math.random() * 0.3);
-      bp.Q.value = 5;
-      const g = this.env(at, 0.001, 0.018, 1);
+      bp.Q.value = 0.8; // dry, not a ringing drop
+      const g = this.env(at, 0.0005, 0.008, 1);
       src.connect(bp).connect(g).connect(node);
       src.start(at, Math.random() * 0.5);
       src.stop(at + 0.04);
     }
+  }
+
+  /**
+   * Ants on me: the dry crackle of their jaws (a quick double snap) and the scratchy scurry of their
+   * feet on the skin.
+   */
+  scurry(p?: THREE.Vector3, vol = 0.3) {
+    const o = this.out(p, vol);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const grain = (at: number, f: number, q: number, len: number, amp: number) => {
+      const src = this.noiseSrc();
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = f;
+      hp.Q.value = q;
+      const g = this.env(at, 0.0005, len, amp);
+      src.connect(hp).connect(g).connect(node);
+      src.start(at, Math.random() * 0.5);
+      src.stop(at + len + 0.01);
+    };
+    // the jaws: snap-snap
+    grain(t, 2500, 0.7, 0.006, 1);
+    grain(t + 0.035 + Math.random() * 0.02, 2800, 0.7, 0.005, 0.8);
+    // the feet: a scratchy patter
+    for (let i = 0; i < 10; i++) grain(t + 0.05 + Math.random() * 0.3, 5000 + Math.random() * 3000, 0.5, 0.003 + Math.random() * 0.004, 0.25 + Math.random() * 0.25);
   }
 
   /** An ant straining under a load: a barely heard "kh-kh-kh". */
@@ -491,6 +517,45 @@ class Sound {
     scrape.connect(lp).connect(sg).connect(node);
     scrape.start(t, Math.random() * 0.5);
     scrape.stop(t + 0.08);
+  }
+
+  /**
+   * A step on the fruit's skin: rubber squeaking on glass, softly — "wee" (up: the pitch rising, the back
+   * pulling up) or "woo" (down: falling, the front stretching on). Stick-slip: a buzzy tone, trembling.
+   */
+  rub(p?: THREE.Vector3, up = true, vol = 0.08) {
+    const o = this.out(p, vol);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const len = 0.13 + Math.random() * 0.04;
+    const f0 = (up ? 620 : 820) * (0.9 + Math.random() * 0.2);
+    const f1 = up ? f0 * 1.45 : f0 * 0.68;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f1, t + len);
+    // the stick-slip judder
+    const judder = ctx.createOscillator();
+    judder.frequency.value = 55 + Math.random() * 25;
+    const jg = ctx.createGain();
+    jg.gain.value = 0.45;
+    const trem = ctx.createGain();
+    trem.gain.value = 0.55;
+    judder.connect(jg).connect(trem.gain);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = (f0 + f1) * 0.75;
+    bp.Q.value = 2.5;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(1, t + 0.03);
+    g.gain.setValueAtTime(1, t + len * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    osc.connect(trem).connect(bp).connect(g).connect(node);
+    osc.start(t);
+    judder.start(t);
+    osc.stop(t + len + 0.02);
+    judder.stop(t + len + 0.02);
   }
 
   /** Stuck in a web (or tugging at it): the silk twangs. */

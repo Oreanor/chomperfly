@@ -126,6 +126,10 @@ export class WormSim {
   readonly n = new THREE.Vector3(); // skin normal
   readonly f = new THREE.Vector3(); // heading
   private phase = 0;
+  /** Where in its inchworm step it is (0…1), for the sounds. */
+  get crawl() {
+    return this.phase;
+  }
   private tailDist = 0;
   // inside
   readonly p = new THREE.Vector3(); // head center

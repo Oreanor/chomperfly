@@ -25,7 +25,7 @@ import { WormSim, type SimInput } from '@/lib/worm/WormSim';
 import { Bot } from '@/lib/worm/Bot';
 import { LEVEL, LEVELS, type LevelName } from '@/lib/worm/levels';
 import { disposeWormView, makeWormView, placeLabel, poseWorm, setLabel, setRainbow, setStunGlow, setWormColor, type WormView } from '@/lib/worm/wormView';
-import { BIG_AT, DEFAULT_NAME, WIN_DEFAULT, WIN_GROWTH, WIN_SIZE_GAIN, antsDrag, damp, girth, L0, N, RADII, r3, winProgress } from '@/lib/worm/constants';
+import { BIG_AT, DEFAULT_NAME, WIN_DEFAULT, WIN_GROWTH, WIN_SIZE_GAIN, antsDrag, damp, girth, L0, LC0, N, RADII, r3, STRAIGHT_HOLD, winProgress } from '@/lib/worm/constants';
 
 /** What the React UI shows. Kept small: it is compared and re-sent every frame. */
 export type HudState = {
@@ -450,6 +450,8 @@ export function startEngine(o: EngineOptions): Engine {
   let soundWeb = 0;
   let stompIn = 0; // s to the chafer's next footfall
   let stompStep = 0;
+  let rubWas = 0; // my crawl step last frame
+  const rubAt = new Map<string, THREE.Vector3>(); // other worms: where their head last squeaked
   let chewWave = -1; // the swallowing wave last frame (a new one: a new mouthful)
   let drillIn = 0;
   const earwigWas = new Map<number, THREE.Vector3>();
@@ -1720,7 +1722,31 @@ export function startEngine(o: EngineOptions): Engine {
     if (sim.gnawing && sim.wave >= 0 && (chewWave < 0 || sim.wave < chewWave)) sound.chew(0.2);
     chewWave = sim.wave;
     soundHead.copy(sim.head);
-    if (antsOnMe > 0 && Math.random() < dt * (1.2 + antsOnMe * 0.6)) sound.clicks(sim.head, 2 + Math.floor(Math.random() * 2), 1, 0.22);
+    // crawling on the skin, rubber on glass: "wee" as the back pulls up, "woo" as the front stretches on
+    const step = sim.crawl;
+    if (sim.mode === 'surface' && !riding && step !== rubWas) {
+      const pull = STRAIGHT_HOLD;
+      const reach = STRAIGHT_HOLD + (1 - STRAIGHT_HOLD) / 2;
+      const crossed = (x: number) => (rubWas < x && step >= x) || (step < rubWas && (rubWas < x || step >= x));
+      if (crossed(pull)) sound.rub(undefined, true);
+      if (crossed(reach)) sound.rub(undefined, false);
+    }
+    rubWas = step;
+    // other worms crawling: the same, a squeak each half step their head goes on; quieter further off
+    for (const [id, r] of remotes) {
+      if (r.mode !== 'surface' || r.out) {
+        rubAt.delete(id);
+        continue;
+      }
+      const head = r.disp[N - 1];
+      const was = rubAt.get(id);
+      if (!was) rubAt.set(id, head.clone());
+      else if (was.distanceTo(head) > 0.5 * (L0 - LC0) * r.size) {
+        sound.rub(head, Math.random() < 0.5, 0.08);
+        was.copy(head);
+      }
+    }
+    if (antsOnMe > 0 && Math.random() < dt * (1 + antsOnMe * 0.5)) sound.scurry(sim.head, 0.28);
     if (webShakes && !soundWeb) sound.twang(sim.head, 0.4);
     soundWeb = webShakes;
     // critters: ants grunt under a load and squeak in a quarrel, wings buzz, the chafer gallops
