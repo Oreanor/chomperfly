@@ -25,7 +25,7 @@ import { WormSim, type SimInput } from '@/lib/worm/WormSim';
 import { Bot } from '@/lib/worm/Bot';
 import { LEVEL, LEVELS, type LevelName } from '@/lib/worm/levels';
 import { disposeWormView, makeWormView, placeLabel, poseWorm, setLabel, setRainbow, setStunGlow, setWormColor, type WormView } from '@/lib/worm/wormView';
-import { BIG_AT, DEFAULT_NAME, WIN_DEFAULT, WIN_GROWTH, WIN_SIZE_GAIN, antsDrag, damp, girth, L0, N, RADII, r3, winProgress } from '@/lib/worm/constants';
+import { BIG_AT, DEFAULT_NAME, DIG_SPEED, WIN_DEFAULT, WIN_GROWTH, WIN_SIZE_GAIN, antsDrag, damp, girth, L0, N, RADII, r3, winProgress } from '@/lib/worm/constants';
 
 /** What the React UI shows. Kept small: it is compared and re-sent every frame. */
 export type HudState = {
@@ -450,6 +450,7 @@ export function startEngine(o: EngineOptions): Engine {
   let soundWeb = 0;
   let stompIn = 0; // s to the chafer's next footfall
   let stompStep = 0;
+  let chewIn = 0;
   const chaferWas = new THREE.Vector3();
   let isHost = false;
   let roundOver = false; // someone won (or the arena wiped out): everyone stops until the next round
@@ -1710,10 +1711,14 @@ export function startEngine(o: EngineOptions): Engine {
       else if (soundMode === 'fly' && sim.mode === 'surface') sound.thud(undefined, 0.8);
       soundMode = sim.mode;
     }
-    // chewing through the flesh, as fast as I go
+    // gnawing through the flesh: a soft crunch every half second, more often the faster I go
+    chewIn -= dt;
     if (sim.mode === 'dig') {
-      const speed = sim.head.distanceTo(soundHead) / Math.max(dt, 1e-3);
-      if (Math.random() < dt * Math.min(7, speed * 2.5)) sound.crunch(undefined, 2, 0.13);
+      const pace = sim.head.distanceTo(soundHead) / Math.max(dt, 1e-3) / (DIG_SPEED * sim.growth);
+      if (pace > 0.2 && chewIn <= 0) {
+        sound.chew(0.2);
+        chewIn = Math.max(0.15, 0.5 / Math.max(1, pace)) * (0.9 + Math.random() * 0.2);
+      }
     }
     soundHead.copy(sim.head);
     if (antsOnMe > 0 && Math.random() < dt * (1.2 + antsOnMe * 0.6)) sound.clicks(sim.head, 2 + Math.floor(Math.random() * 2), 1, 0.22);
@@ -1740,7 +1745,19 @@ export function startEngine(o: EngineOptions): Engine {
       sound.stomp(chafer, riding ? 1 : 0.7, k === 2 ? 1 : 0.75);
       stompIn = k === 2 ? 0.2 : 0.075;
     }
-    if (!night && sim.mode !== 'dig') for (const g of gnats.flying()) sound.buzz(`g${g.i}`, g.p, g.close ? 380 : 430, g.close ? 0.45 : 0.18);
+    // a fly heard only as it passes right in front of the camera, one at a time (far ones are silent)
+    if (!night && sim.mode !== 'dig') {
+      let near: { i: number; p: THREE.Vector3; close: boolean } | null = null;
+      let nd = 2.5;
+      for (const g of gnats.flying()) {
+        const d = g.p.distanceTo(camera.position);
+        if (d < nd) {
+          nd = d;
+          near = g;
+        }
+      }
+      if (near) sound.buzz('fly', near.p, near.close ? 360 : 410, 0.16);
+    }
     sound.endFrame(Math.min(1, night), sim.mode === 'dig' ? 1 : 0);
   }
 
@@ -2132,6 +2149,14 @@ export function startEngine(o: EngineOptions): Engine {
   if (process.env.NODE_ENV !== 'production') {
     const w = window as unknown as Record<string, unknown>;
     w.__sound = sound; // __sound.hit(), __sound.whoosh(), … to hear one
+    // __spawn(2): a critter now (0 ant, 1 ladybug, 2 spider, 3 earwig, 4 chafer), near me
+    w.__spawn = (kind: number) => {
+      const s = antSim as unknown as { spawn(k: number): { p: THREE.Vector3 }; ants: { p: THREE.Vector3 }[] };
+      const a = s.spawn(kind);
+      a.p.copy(sim.head).addScaledVector(new THREE.Vector3().randomDirection(), 1.5);
+      appleProject(a.p);
+      s.ants.push(a);
+    };
     w.__wormFly = () => {
       sim.startVictory(camera.position.clone().sub(sim.head));
       later(3300, startOverview);

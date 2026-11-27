@@ -86,57 +86,77 @@ class Sound {
 
   // ---------- one-shots ----------
 
-  /** The tail (or the body) swung through the air. */
+  /**
+   * The tail (or the body) swung through the air: a soft rush of air, no ringing tone (broad filters,
+   * the low end rising and falling as it sweeps past).
+   */
   whoosh(strength = 1, p?: THREE.Vector3) {
-    const o = this.out(p, 0.5 * strength);
+    const o = this.out(p, 0.45 * strength);
     if (!o) return;
     const { ctx, t, node } = o;
-    const len = 0.22 + 0.12 * strength;
+    const len = 0.2 + 0.1 * strength;
     const src = this.noiseSrc();
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = 1.4;
-    const f0 = 280 * (0.85 + Math.random() * 0.3);
-    bp.frequency.setValueAtTime(f0, t);
-    bp.frequency.exponentialRampToValueAtTime(f0 * (5 + 2 * strength), t + len * 0.4);
-    bp.frequency.exponentialRampToValueAtTime(f0 * 1.6, t + len);
-    const g = this.env(t, 0.05, len, 1);
-    src.connect(bp).connect(g).connect(node);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 180;
+    hp.Q.value = 0.3;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 0.2;
+    const f0 = 450 * (0.85 + Math.random() * 0.3);
+    lp.frequency.setValueAtTime(f0, t);
+    lp.frequency.exponentialRampToValueAtTime(f0 * (2.6 + strength), t + len * 0.45);
+    lp.frequency.exponentialRampToValueAtTime(f0 * 0.9, t + len);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(1, t + len * 0.45);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    src.connect(hp).connect(lp).connect(g).connect(node);
     src.start(t, Math.random() * 0.5);
     src.stop(t + len + 0.05);
   }
 
   /**
-   * A hit landing — the "thwack": a low thump with a crack on top. pop: a smaller, higher knock (a bite,
-   * a pincer strike); strokes: a lash or a swat.
+   * A hit landing on a body — a wet, meaty slap: a sharp broadband smack, the dull squish of flesh
+   * under it and a short low thud (no ringing). pop: smaller and higher (a bite, a pincer strike).
    */
   hit(strength = 1, p?: THREE.Vector3, style: 'pop' | 'strokes' = 'strokes') {
     const s = Math.min(1.6, Math.max(0.25, strength));
-    const o = this.out(p, 0.85 * Math.min(1.2, s));
+    const o = this.out(p, 0.9 * Math.min(1.2, s));
     if (!o) return;
     const { ctx, t, node } = o;
     const pop = style === 'pop';
-    const thump = ctx.createOscillator();
-    thump.type = 'sine';
-    const fTop = (pop ? 230 : 150) / Math.sqrt(s) * (0.9 + Math.random() * 0.2);
-    thump.frequency.setValueAtTime(fTop, t);
-    thump.frequency.exponentialRampToValueAtTime(fTop * 0.32, t + (pop ? 0.12 : 0.2));
-    const tg = this.env(t, 0.003, pop ? 0.16 : 0.28, 1);
-    // a touch of grit
-    const shape = ctx.createWaveShaper();
-    shape.curve = SATURATE;
-    thump.connect(tg).connect(shape).connect(node);
-    thump.start(t);
-    thump.stop(t + 0.35);
-    const crack = this.noiseSrc();
-    const f = ctx.createBiquadFilter();
-    f.type = pop ? 'bandpass' : 'lowpass';
-    f.frequency.value = pop ? 1600 : 2600;
-    f.Q.value = pop ? 1.2 : 0.7;
-    const cg = this.env(t, 0.001, pop ? 0.05 : 0.09, pop ? 0.7 : 0.6);
-    crack.connect(f).connect(cg).connect(node);
-    crack.start(t, Math.random() * 0.5);
-    crack.stop(t + 0.15);
+    const k = (pop ? 1.6 : 1) / Math.sqrt(s);
+    // the slap: skin on skin
+    const slap = this.noiseSrc();
+    const sb = ctx.createBiquadFilter();
+    sb.type = 'bandpass';
+    sb.frequency.value = 1300 * k * (0.85 + Math.random() * 0.3);
+    sb.Q.value = 0.5;
+    const sg = this.env(t, 0.001, pop ? 0.035 : 0.05, 1);
+    slap.connect(sb).connect(sg).connect(node);
+    slap.start(t, Math.random() * 0.5);
+    slap.stop(t + 0.1);
+    // the squish: the flesh giving under it
+    const squish = this.noiseSrc();
+    const sq = ctx.createBiquadFilter();
+    sq.type = 'lowpass';
+    sq.frequency.setValueAtTime(900 * k, t);
+    sq.frequency.exponentialRampToValueAtTime(250 * k, t + 0.1);
+    sq.Q.value = 0.4;
+    const qg = this.env(t + 0.004, 0.006, pop ? 0.06 : 0.11, 0.9);
+    squish.connect(sq).connect(qg).connect(node);
+    squish.start(t, Math.random() * 0.5);
+    squish.stop(t + 0.2);
+    // the thud: short and low, felt more than heard
+    const thud = ctx.createOscillator();
+    const f = (pop ? 120 : 80) * (0.9 + Math.random() * 0.2);
+    thud.frequency.setValueAtTime(f, t);
+    thud.frequency.exponentialRampToValueAtTime(f * 0.75, t + 0.06);
+    const tg = this.env(t, 0.002, pop ? 0.05 : 0.09, pop ? 0.4 : 0.7);
+    thud.connect(tg).connect(node);
+    thud.start(t);
+    thud.stop(t + 0.14);
   }
 
   /** Mandibles: a few quick dry clicks (ants, a spider's fangs). */
@@ -243,6 +263,42 @@ class Sound {
       src.start(at, Math.random() * 0.5);
       src.stop(at + 0.1);
     }
+  }
+
+  /**
+   * Gnawing through the flesh: a soft "khrum", like a step in fresh snow — a quick swell of tiny
+   * crackles, then a dull settle.
+   */
+  chew(vol = 0.2) {
+    const o = this.out(undefined, vol);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const len = 0.11 + Math.random() * 0.05;
+    const grains = 14 + Math.floor(Math.random() * 8);
+    for (let i = 0; i < grains; i++) {
+      // denser and louder towards the middle of the crunch
+      const u = Math.random();
+      const at = t + len * u;
+      const amp = Math.sin(Math.PI * u) * (0.5 + Math.random() * 0.5);
+      const src = this.noiseSrc();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1400 + Math.random() * 3200;
+      bp.Q.value = 1.2;
+      const g = this.env(at, 0.001, 0.004 + Math.random() * 0.008, Math.max(0.05, amp));
+      src.connect(bp).connect(g).connect(node);
+      src.start(at, Math.random() * 0.5);
+      src.stop(at + 0.03);
+    }
+    // the dull body of it: the flesh packing down
+    const body = this.noiseSrc();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 700;
+    const bg = this.env(t + len * 0.3, 0.03, len, 0.35);
+    body.connect(lp).connect(bg).connect(node);
+    body.start(t, Math.random() * 0.5);
+    body.stop(t + len * 1.6);
   }
 
   /** A drop of dew picked up: a bubbly bloop. */
