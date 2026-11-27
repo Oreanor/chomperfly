@@ -6,28 +6,13 @@ import { chitinBump } from './critterBodies';
 // Model units: the body is ~1.06 long; makeEarwig(s) scales it.
 
 const sphere = new THREE.SphereGeometry(1, 20, 14);
-/** A rounded box (a plate of armour). */
-const plate = (() => {
-  const g = new THREE.BoxGeometry(2, 2, 2, 6, 6, 6);
-  const pos = g.getAttribute('position');
-  const v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const round = v.clone().normalize().multiplyScalar(Math.SQRT2);
-    v.lerp(round, 0.35).multiplyScalar(1 / 1.0875);
-    pos.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  return g;
-})();
 const segA = new THREE.MeshPhysicalMaterial({ color: 0x55220f, roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2 });
 const segB = new THREE.MeshPhysicalMaterial({ color: 0x481c0d, roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2 });
-const wingCase = new THREE.MeshPhysicalMaterial({ color: 0x6a4024, roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.5 });
-const pale = new THREE.MeshStandardMaterial({ color: 0x8c6a46, roughness: 0.5 });
+const wingCase = new THREE.MeshPhysicalMaterial({ color: 0x8a6440, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.25 });
 const feelerDark = new THREE.MeshStandardMaterial({ color: 0x6a3418, roughness: 0.45 });
-const legMat = new THREE.MeshStandardMaterial({ color: 0x8a5526, roughness: 0.42 }); // amber legs and feeler tips
-const headMat = new THREE.MeshPhysicalMaterial({ color: 0x7a2a12, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
-const thoraxMat = new THREE.MeshPhysicalMaterial({ color: 0x4a2a17, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.25 });
+const legMat = new THREE.MeshStandardMaterial({ color: 0xb08040, roughness: 0.42 }); // amber legs and feeler tips
+const headMat = new THREE.MeshPhysicalMaterial({ color: 0x5e2010, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+const thoraxMat = new THREE.MeshPhysicalMaterial({ color: 0x6a4428, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.25 });
 const pincerMat = new THREE.MeshPhysicalMaterial({ color: 0x7e3414, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
 let wingTex: THREE.CanvasTexture | null = null;
 const wingMat = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, depthWrite: false });
@@ -138,14 +123,14 @@ export function makeEarwig(s = 1): EarwigModel {
     m.castShadow = true;
     abdomen[i].add(m);
   });
-  // the short wing cases on its back, and the wings' pale tips peeping out
+  // the short wing cases on its back: two glossy rounded shells meeting at a seam
   for (const side of [-1, 1]) {
-    add(plate, wingCase, 0.044 * side, 0.086, 0.115, 0.043, 0.01, 0.072, 0.04 * side);
-    add(sphere, pale, 0.028 * side, 0.088, 0.035, 0.02, 0.01, 0.026, 0.35 * side);
+    add(sphere, wingCase, 0.043 * side, 0.08, 0.115, 0.046, 0.022, 0.076, 0.05 * side);
   }
-  add(plate, thoraxMat, 0, 0.097, 0.115, 0.004, 0.004, 0.072); // the seam between the cases
-  add(sphere, thoraxMat, 0, 0.08, 0.235, 0.08, 0.03, 0.062); // the neck shield
-  add(sphere, wingCase, 0, 0.074, 0.235, 0.088, 0.022, 0.066);
+  add(sphere, segB, 0, 0.1, 0.115, 0.0035, 0.004, 0.07); // the seam between the cases
+  // the neck shield: a rounded plate with a fine line down its middle
+  add(sphere, thoraxMat, 0, 0.08, 0.235, 0.074, 0.027, 0.06);
+  add(sphere, segB, 0, 0.105, 0.235, 0.005, 0.004, 0.052);
   // the head
   on = head;
   add(sphere, headMat, 0, 0.078, 0.33, 0.062, 0.045, 0.06);

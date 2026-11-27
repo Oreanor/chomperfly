@@ -67,7 +67,10 @@ const SPIDER_SENSE = 14; // a spider feels a worm stuck in a web this far away
 const SPIDER_RUSH = 2.6; // and runs over this fast
 const STING_PEACE = 15; // seconds a bitten worm is left alone
 const SILK_STEP = 0.2; // a thread point every this far
-export const SILK_POINTS = 250; // a spider's thread is this many points long (~50 units); then the oldest bit goes
+export const SILK_POINTS = 500; // a spider's thread is this many points long (a web and a trail); then the oldest bit goes
+const ORB_R = 1.4; // an orb web's radius (~3.5 spider lengths across)
+const ORB_STEP = 0.1; // a thread point every this far while weaving one (finer than the trail)
+const ORB_TURNS = 3.5; // turns of its spiral
 const SWAT_REACH = 2; // a tail swat scares critters this close to the worm's body
 const ANT_BITE_EVERY = 5; // s an ant on a worm's back (alone there) takes to bite
 
@@ -186,6 +189,10 @@ type Ant = {
   driftTo?: number;
   drift?: number;
   tornSilk?: Set<number>; // thread points it already tore through (by number)
+  // a spider weaving an orb web: where it walks next (silk: laying thread on the way; gap: a fresh
+  // thread starts there, not joined to the last one), and the pause till the next web
+  orb?: { way: { p: THREE.Vector3; silk: boolean; gap: boolean }[]; i: number; gap: boolean };
+  orbCool?: number;
   stunned?: Map<string, number>; // worms it ran over, until when they're safe from it
 };
 
@@ -960,13 +967,18 @@ export class AntSim {
       });
     }
     if (prey) {
+      if (a.orb) a.orbCool = 15 + Math.random() * 15; // dinner first; a new web later
+      a.orb = undefined;
       a.state = CHASE;
       a.target = preyId;
       if (pd < SPECS[SPIDER].len * 0.6) {
         this.stungUntil.set(preyId, this.clock + STING_PEACE);
         this.onSting?.(preyId, preyBall);
       } else this.steer(a, prey, SPIDER_RUSH, dt);
-    } else {
+    } else if (a.orb) this.weave(a, dt);
+    else {
+      a.orbCool = (a.orbCool ?? 6) - dt;
+      if (a.orbCool <= 0 && Math.random() < dt * 0.3) this.planOrb(a);
       a.burst -= dt;
       if (a.burst > 0) this.move(a, SPECS[SPIDER].speed * (0.6 + 0.8 * Math.abs(Math.sin(a.age * 3 + a.id))), dt);
       else if (a.burst < -(0.1 + Math.random() * 0.4)) {
@@ -977,11 +989,78 @@ export class AntSim {
     }
     let silk = this.threads.get(a.id);
     if (!silk) this.threads.set(a.id, (silk = []));
-    const last = silk[silk.length - 1];
-    if (!last || last.distanceTo(a.p) > SILK_STEP) {
-      silk.push(a.p.clone());
+    const orb = a.orb;
+    if (orb && !orb.way[orb.i]?.silk) return; // walking back along a spoke: no thread
+    const spin = (p: THREE.Vector3) => {
+      silk.push(p);
       this.silkTotal.set(a.id, (this.silkTotal.get(a.id) ?? 0) + 1);
       if (silk.length > SILK_POINTS) silk.shift();
+    };
+    if (orb?.gap) {
+      // a fresh thread from here (a new spoke, the spiral)
+      orb.gap = false;
+      spin(new THREE.Vector3());
+      spin(a.p.clone());
+      return;
+    }
+    const last = silk[silk.length - 1];
+    if (!last || last.distanceTo(a.p) > (orb ? ORB_STEP : SILK_STEP)) spin(a.p.clone());
+  }
+
+  /**
+   * An orb web, from where the spider stands: eight spokes like a star (out along each laying thread,
+   * back to the middle without), then a spiral from the middle outwards across them.
+   */
+  private planOrb(a: Ant) {
+    const c = a.p.clone();
+    const e1 = a.f.clone();
+    const e2 = new THREE.Vector3().crossVectors(a.n, e1).normalize();
+    const at = (r: number, th: number) => {
+      const p = c.clone().addScaledVector(e1, r * Math.cos(th)).addScaledVector(e2, r * Math.sin(th));
+      return appleProject(p);
+    };
+    const way: NonNullable<Ant['orb']>['way'] = [];
+    const tilt = Math.random() * Math.PI;
+    for (let k = 0; k < 8; k++) {
+      const th = tilt + (k * Math.PI) / 4 + (Math.random() - 0.5) * 0.15;
+      way.push({ p: at(ORB_R * (0.92 + Math.random() * 0.16), th), silk: true, gap: true });
+      way.push({ p: c.clone(), silk: false, gap: false });
+    }
+    const end = ORB_TURNS * 2 * Math.PI;
+    for (let th = 0.3; th <= end; ) {
+      const r = (ORB_R * 0.95 * th) / end;
+      way.push({ p: at(r, tilt + th), silk: true, gap: way[way.length - 1].silk === false });
+      th += ORB_STEP / Math.max(0.15, r); // about a step of thread per waypoint
+    }
+    a.orb = { way, i: 0, gap: true };
+    a.burst = 0;
+  }
+
+  /** Walking the web's plan: on to the next point, and the next. Done: off it goes. */
+  private weave(a: Ant, dt: number) {
+    const orb = a.orb!;
+    let go = SPECS[SPIDER].speed * (orb.way[orb.i].silk ? 0.55 : 0.9) * dt;
+    while (go > 0 && orb.i < orb.way.length) {
+      const w = orb.way[orb.i];
+      const d = this.tmp.subVectors(w.p, a.p);
+      d.addScaledVector(a.n, -d.dot(a.n));
+      const dist = d.length();
+      if (dist <= go) {
+        a.p.copy(w.p);
+        appleNormal(a.p, a.n);
+        go -= dist;
+        orb.i++;
+        if (orb.way[orb.i]?.gap) orb.gap = true;
+        continue;
+      }
+      a.f.copy(d.normalize());
+      this.move(a, go / dt, dt);
+      go = 0;
+    }
+    if (orb.i >= orb.way.length) {
+      a.orb = undefined;
+      a.orbCool = 30 + Math.random() * 30;
+      a.burst = 1.5; // and away
     }
   }
 

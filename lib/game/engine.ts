@@ -17,7 +17,7 @@ import { Gnats } from '@/lib/render/gnats';
 import { SunFlare } from '@/lib/render/sunFlare';
 import { LIGHTING, LIGHTS, type LightName } from '@/lib/render/lighting';
 import { freeDir, slotDir } from '@/lib/worm/spawn';
-import { ANT, AntSim, CARRY, CHAFER, CHASE, HOLD, LADYBUG, QUARREL, SPECS, type WormInfo } from '@/lib/worm/Ants';
+import { ANT, AntSim, CARRY, CHAFER, CHASE, EARWIG, HOLD, LADYBUG, QUARREL, SPECS, type WormInfo } from '@/lib/worm/Ants';
 import { sound } from '@/lib/sound';
 import { AntView } from '@/lib/worm/AntView';
 import { SkyDome, loadFruitSky, sunDirFromPanorama } from '@/lib/render/sky';
@@ -451,6 +451,8 @@ export function startEngine(o: EngineOptions): Engine {
   let stompIn = 0; // s to the chafer's next footfall
   let stompStep = 0;
   let chewIn = 0;
+  let drillIn = 0;
+  const earwigWas = new Map<number, THREE.Vector3>();
   const chaferWas = new THREE.Vector3();
   let isHost = false;
   let roundOver = false; // someone won (or the arena wiped out): everyone stops until the next round
@@ -477,6 +479,8 @@ export function startEngine(o: EngineOptions): Engine {
     if (!(prevFx < CONFETTI_AT && fx >= CONFETTI_AT)) return;
     const at = disp[N - 3];
     confetti.burst(at, at.clone().normalize(), L0 * size);
+    sound.popper(at);
+    sound.flutter(at);
   };
   const holes = new HoleLayer(scene, fruitUniforms.uNight);
   let time = 0;
@@ -1706,18 +1710,19 @@ export function startEngine(o: EngineOptions): Engine {
   function playSounds(dt: number) {
     sound.listen(camera);
     if (sim.mode !== soundMode) {
-      if (sim.mode === 'dig' && soundMode === 'surface') sound.crunch(undefined, 5, 0.45);
+      if (sim.mode === 'dig' && soundMode === 'surface') sound.bite();
       else if (soundMode === 'dig') sound.pop();
       else if (soundMode === 'fly' && sim.mode === 'surface') sound.thud(undefined, 0.8);
       soundMode = sim.mode;
     }
-    // gnawing through the flesh: a soft crunch every half second, more often the faster I go
+    // gnawing new flesh (not crawling an old passage, not dragged back along it): a soft crunch every
+    // half second or so, a little more often the faster I go
     chewIn -= dt;
-    if (sim.mode === 'dig') {
+    if (sim.gnawing) {
       const pace = sim.head.distanceTo(soundHead) / Math.max(dt, 1e-3) / (DIG_SPEED * sim.growth);
       if (pace > 0.2 && chewIn <= 0) {
         sound.chew(0.2);
-        chewIn = Math.max(0.15, 0.5 / Math.max(1, pace)) * (0.9 + Math.random() * 0.2);
+        chewIn = Math.max(0.35, 0.55 / Math.max(1, pace)) * (0.9 + Math.random() * 0.2);
       }
     }
     soundHead.copy(sim.head);
@@ -1729,6 +1734,18 @@ export function startEngine(o: EngineOptions): Engine {
     const squeakers: THREE.Vector3[] = [];
     let chafer: THREE.Vector3 | null = null;
     for (const c of antView.heard()) {
+      if (c.kind === EARWIG && c.inside) {
+        // the earwig drilling through the flesh: heard through it, muffled from outside
+        const moved = earwigWas.has(c.id) && c.p.distanceTo(earwigWas.get(c.id)!) / Math.max(dt, 1e-3) > 0.3;
+        earwigWas.set(c.id, c.p.clone());
+        drillIn -= dt;
+        if (moved && drillIn <= 0) {
+          sound.drill(c.p, sim.mode === 'dig' ? 1 : 0.5);
+          drillIn = 0.17 + Math.random() * 0.06;
+        }
+        continue;
+      }
+      if (!c.shown) continue;
       if (c.flying) sound.buzz(`c${c.id}`, c.p, c.kind === LADYBUG ? 150 : 120, 0.35);
       else if (c.kind === CHAFER && (c.state === CHASE || riding)) chafer = c.p;
       else if (c.kind === ANT && (c.state === HOLD || c.state === CARRY)) grunters.push(c.p);
@@ -2149,6 +2166,9 @@ export function startEngine(o: EngineOptions): Engine {
   if (process.env.NODE_ENV !== 'production') {
     const w = window as unknown as Record<string, unknown>;
     w.__sound = sound; // __sound.hit(), __sound.whoosh(), … to hear one
+    // __webs(): the spiders' silk as the host has it: per spider, its points and breaks
+    w.__webs = () => antSim.webs().map((t) => ({ id: t[0], points: (t.length - 2) / 3, breaks: t.slice(2).filter((_, i, a) => i % 3 === 0 && a[i] === 0 && a[i + 1] === 0 && a[i + 2] === 0).length }));
+    w.__silk = () => antSim.webs(); // the raw threads
     // __spawn(2): a critter now (0 ant, 1 ladybug, 2 spider, 3 earwig, 4 chafer), near me
     w.__spawn = (kind: number) => {
       const s = antSim as unknown as { spawn(k: number): { p: THREE.Vector3 }; ants: { p: THREE.Vector3 }[] };

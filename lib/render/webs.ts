@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SILK_POINTS } from '@/lib/worm/Ants';
 
-type Thread = { total: number; pts: THREE.Vector3[]; line: THREE.LineSegments; beads: THREE.Points; goal?: THREE.Vector3[] };
+type Thread = { total: number; pts: THREE.Vector3[]; line: THREE.LineSegments; goal?: THREE.Vector3[] };
 
 /** Samples drawn per spun segment (the thread is a smooth curve through the points). */
 const SUB = 5;
@@ -40,28 +40,11 @@ function silkMaterial() {
   });
 }
 
-/** A dew bead: a soft bright dot with a highlight. */
-function beadTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 32;
-  const ctx = c.getContext('2d')!;
-  const g = ctx.createRadialGradient(13, 13, 1, 16, 16, 15);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.35, 'rgba(230,240,255,0.75)');
-  g.addColorStop(0.8, 'rgba(200,220,240,0.18)');
-  g.addColorStop(1, 'rgba(200,220,240,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 32, 32);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
 /** A point at the origin is a break in a thread (it was torn there). */
 const isGap = (p: THREE.Vector3) => p.lengthSq() < 1e-9;
 
 /**
- * Spiders' silk threads on the skin: fine curving strands that glint in the light, dew on them; a worm
+ * Spiders' silk threads on the skin: fine curving strands that glint in the light; a worm
  * touching one gets stuck.
  * The host sends them in full now and then (set) and just the new bits in between (add).
  * Each entry: [spider id, points ever spun, x, y, z, x, y, z, …]; a point (0, 0, 0) is a break.
@@ -69,8 +52,6 @@ const isGap = (p: THREE.Vector3) => p.lengthSq() < 1e-9;
 export class Webs {
   private group = new THREE.Group();
   private mat = silkMaterial();
-  private beadTex: THREE.CanvasTexture | null = null;
-  private beadMat = new THREE.PointsMaterial({ size: 0.06, transparent: true, depthWrite: false, opacity: 0.95, sizeAttenuation: true });
   private time = 0;
   private threads = new Map<number, Thread>();
   private segs: [THREE.Vector3, THREE.Vector3][] = [];
@@ -159,8 +140,6 @@ export class Webs {
     this.set([]);
     this.group.removeFromParent();
     this.mat.dispose();
-    this.beadMat.dispose();
-    this.beadTex?.dispose();
   }
 
   private thread(id: number) {
@@ -170,12 +149,7 @@ export class Webs {
       line.frustumCulled = false;
       line.renderOrder = 52;
       this.group.add(line);
-      this.beadMat.map ??= this.beadTex ??= beadTexture();
-      const beads = new THREE.Points(new THREE.BufferGeometry(), this.beadMat);
-      beads.frustumCulled = false;
-      beads.renderOrder = 53;
-      this.group.add(beads);
-      t = { total: 0, pts: [], line, beads };
+      t = { total: 0, pts: [], line };
       this.threads.set(id, t);
     }
     return t;
@@ -186,20 +160,17 @@ export class Webs {
     if (!t) return;
     t.line.removeFromParent();
     t.line.geometry.dispose();
-    t.beads.removeFromParent();
-    t.beads.geometry.dispose();
     this.threads.delete(id);
   }
 
   /**
    * The thread as a smooth, taut curve through its points (the spider's little wobbles evened out; none
-   * across a break), and dew beads on it here and there. Beads and glints are tied to the points
-   * themselves (their index in all the silk ever spun), so they stay put as the thread grows.
+   * across a break). The glints are tied to the points themselves (their index in all the silk ever
+   * spun), so they stay put as the thread grows.
    */
   private redraw(t: Thread) {
     const pos: number[] = [];
     const along: number[] = [];
-    const beads: number[] = [];
     const first = t.total - t.pts.length; // the index of pts[0] in all the silk ever spun
     let run: THREE.Vector3[] = [];
     let runAt = 0;
@@ -230,11 +201,6 @@ export class Webs {
         prev = q;
         prevA = at;
       }
-      // dew on about one point in five, chosen by the point itself
-      for (let i = 0; i < smooth.length; i++) {
-        const h = Math.abs(Math.sin((runAt + i) * 12.9898) * 43758.5453) % 1;
-        if (h < 0.2) beads.push(smooth[i].x, smooth[i].y, smooth[i].z);
-      }
       run = [];
     };
     t.pts.forEach((q, i) => {
@@ -247,9 +213,6 @@ export class Webs {
     t.line.geometry = new THREE.BufferGeometry();
     t.line.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     t.line.geometry.setAttribute('along', new THREE.Float32BufferAttribute(along, 1));
-    t.beads.geometry.dispose();
-    t.beads.geometry = new THREE.BufferGeometry();
-    t.beads.geometry.setAttribute('position', new THREE.Float32BufferAttribute(beads, 3));
   }
 
   private rebuildSegs() {

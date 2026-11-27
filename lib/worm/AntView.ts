@@ -186,12 +186,14 @@ export class AntView {
     scene.add(this.group);
   }
 
-  /** For the sounds: each critter shown, what it's doing, and whether its wings are out. */
-  *heard(): Generator<{ id: number; kind: Kind; state: number; p: THREE.Vector3; flying: boolean }> {
+  /**
+   * For the sounds: each critter, what it's doing, whether its wings are out, whether it's inside the
+   * fruit (the drilling earwig) and whether it's shown (one inside isn't, to a worm outside).
+   */
+  *heard(): Generator<{ id: number; kind: Kind; state: number; p: THREE.Vector3; flying: boolean; inside: boolean; shown: boolean }> {
     for (const [id, a] of this.ants) {
-      if (!a.group.visible) continue;
       const flying = !!(a.fly?.wings[0]?.visible || a.earwig?.wings[0]?.visible);
-      yield { id, kind: a.snap[11], state: a.snap[1], p: a.group.position, flying };
+      yield { id, kind: a.snap[11], state: a.snap[1], p: a.group.position, flying, inside: !!a.snap[12], shown: a.group.visible };
     }
   }
 

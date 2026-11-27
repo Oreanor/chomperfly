@@ -91,19 +91,19 @@ class Sound {
    * the low end rising and falling as it sweeps past).
    */
   whoosh(strength = 1, p?: THREE.Vector3) {
-    const o = this.out(p, 0.45 * strength);
+    const o = this.out(p, 0.3 * strength);
     if (!o) return;
     const { ctx, t, node } = o;
     const len = 0.2 + 0.1 * strength;
     const src = this.noiseSrc();
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = 180;
+    hp.frequency.value = 550; // no dense low rustle: just air
     hp.Q.value = 0.3;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.Q.value = 0.2;
-    const f0 = 450 * (0.85 + Math.random() * 0.3);
+    const f0 = 800 * (0.85 + Math.random() * 0.3);
     lp.frequency.setValueAtTime(f0, t);
     lp.frequency.exponentialRampToValueAtTime(f0 * (2.6 + strength), t + len * 0.45);
     lp.frequency.exponentialRampToValueAtTime(f0 * 0.9, t + len);
@@ -301,6 +301,117 @@ class Sound {
     body.stop(t + len * 1.6);
   }
 
+  /**
+   * The earwig drilling through the flesh: faster and meaner than a worm's gnawing — a hard gnash of
+   * its jaws over a low growl.
+   */
+  drill(p?: THREE.Vector3, vol = 1) {
+    const o = this.out(p, 0.35 * vol);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    for (let i = 0; i < 9; i++) {
+      const u = Math.random();
+      const at = t + 0.07 * u;
+      const src = this.noiseSrc();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 700 + Math.random() * 1800;
+      bp.Q.value = 2;
+      const g = this.env(at, 0.001, 0.006 + Math.random() * 0.01, 0.5 + 0.5 * Math.sin(Math.PI * u));
+      src.connect(bp).connect(g).connect(node);
+      src.start(at, Math.random() * 0.5);
+      src.stop(at + 0.03);
+    }
+    const growl = ctx.createOscillator();
+    growl.type = 'sawtooth';
+    growl.frequency.setValueAtTime(62 + Math.random() * 10, t);
+    growl.frequency.linearRampToValueAtTime(48, t + 0.1);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 320;
+    const gg = this.env(t, 0.01, 0.1, 0.55);
+    growl.connect(lp).connect(gg).connect(node);
+    growl.start(t);
+    growl.stop(t + 0.14);
+  }
+
+  /** Biting into the fruit: a bigger, juicier "khrum" — the crunch, then a wet squelch of juice. */
+  bite() {
+    this.chew(0.3);
+    const o = this.out(undefined, 0.3);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const at = t + 0.05;
+    const juice = this.noiseSrc();
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 2.5;
+    bp.frequency.setValueAtTime(1700, at);
+    bp.frequency.exponentialRampToValueAtTime(450, at + 0.16);
+    const g = this.env(at, 0.02, 0.16, 1);
+    juice.connect(bp).connect(g).connect(node);
+    juice.start(at, Math.random() * 0.5);
+    juice.stop(at + 0.25);
+  }
+
+  /** The win: a light party popper — a crisp pop, then a sprinkle of tiny crackles as the confetti flies. */
+  popper(p?: THREE.Vector3) {
+    const o = this.out(p, 0.5);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    const bang = this.noiseSrc();
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    const bg = this.env(t, 0.001, 0.05, 1);
+    bang.connect(hp).connect(bg).connect(node);
+    bang.start(t, Math.random() * 0.5);
+    bang.stop(t + 0.1);
+    const body = ctx.createOscillator();
+    body.frequency.setValueAtTime(330, t);
+    body.frequency.exponentialRampToValueAtTime(140, t + 0.06);
+    const bb = this.env(t, 0.002, 0.07, 0.5);
+    body.connect(bb).connect(node);
+    body.start(t);
+    body.stop(t + 0.1);
+    for (let i = 0; i < 22; i++) {
+      const at = t + 0.08 + Math.random() ** 1.6 * 0.9;
+      const c = this.noiseSrc();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 3500 + Math.random() * 4500;
+      bp.Q.value = 4;
+      const g = this.env(at, 0.001, 0.008 + Math.random() * 0.01, 0.15 + Math.random() * 0.3);
+      c.connect(bp).connect(g).connect(node);
+      c.start(at, Math.random() * 0.5);
+      c.stop(at + 0.03);
+    }
+  }
+
+  /** The butterfly's wings: soft rustling beats, fading as it flies away. */
+  flutter(p?: THREE.Vector3, seconds = 2.6) {
+    const o = this.out(p, 0.35);
+    if (!o) return;
+    const { ctx, t, node } = o;
+    let at = t;
+    while (at < t + seconds) {
+      const k = 1 - (at - t) / seconds; // fading away
+      const src = this.noiseSrc();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1800 + Math.random() * 1400;
+      bp.Q.value = 0.8;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.0001 + k * k * (0.6 + Math.random() * 0.3), at + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.09);
+      src.connect(bp).connect(g).connect(node);
+      src.start(at, Math.random() * 0.5);
+      src.stop(at + 0.1);
+      at += 0.1 + Math.random() * 0.025; // ~9 beats a second
+    }
+  }
+
   /** A drop of dew picked up: a bubbly bloop. */
   bloop(p?: THREE.Vector3) {
     const o = this.out(p, 0.35);
@@ -315,19 +426,32 @@ class Sound {
     osc.stop(t + 0.2);
   }
 
-  /** Out of the fruit: a cork-like pop. */
+  /**
+   * Out of the fruit: a juicy "chpok" — a quick rising pop (like a finger flicked out of a cheek) and a
+   * wet splash of juice after it.
+   */
   pop(p?: THREE.Vector3) {
-    const o = this.out(p, 0.45);
+    const o = this.out(p, 0.4);
     if (!o) return;
     const { ctx, t, node } = o;
     const osc = ctx.createOscillator();
-    osc.frequency.setValueAtTime(700, t);
-    osc.frequency.exponentialRampToValueAtTime(160, t + 0.07);
-    const g = this.env(t, 0.002, 0.09, 1);
+    const f = 520 * (0.92 + Math.random() * 0.16);
+    osc.frequency.setValueAtTime(f, t);
+    osc.frequency.exponentialRampToValueAtTime(f * 2.6, t + 0.045);
+    const g = this.env(t, 0.003, 0.06, 1);
     osc.connect(g).connect(node);
     osc.start(t);
-    osc.stop(t + 0.12);
-    this.crunch(p, 2, 0.2);
+    osc.stop(t + 0.09);
+    const splash = this.noiseSrc();
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 3;
+    bp.frequency.setValueAtTime(3200, t + 0.02);
+    bp.frequency.exponentialRampToValueAtTime(1100, t + 0.14);
+    const sg = this.env(t + 0.02, 0.008, 0.12, 0.6);
+    splash.connect(bp).connect(sg).connect(node);
+    splash.start(t, Math.random() * 0.5);
+    splash.stop(t + 0.2);
   }
 
   /** A soft landing on the skin. */
