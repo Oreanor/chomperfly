@@ -393,7 +393,7 @@ export class AntView {
     a.group.rotateX(-0.45 * Math.max(0, open));
     for (const m of fly.mats) {
       m.transparent = m === fly.mats[2];
-      m.opacity = m === fly.mats[2] ? 0.4 : 1;
+      m.opacity = m === fly.mats[2] ? 0.62 : 1;
     }
   }
 
@@ -429,7 +429,7 @@ export class AntView {
         this.poseWings(fly, 0, 0);
         for (const m of fly.mats) {
           m.transparent = m === fly.mats[2];
-          m.opacity = m === fly.mats[2] ? 0.4 : 1;
+          m.opacity = m === fly.mats[2] ? 0.62 : 1;
         }
       }
       return;
@@ -873,6 +873,7 @@ export class AntView {
       const shellR = ladybugShellMat(texR);
       const black = ladybugBodyMat();
       const membrane = wingMat.clone();
+      const inner = new THREE.MeshStandardMaterial({ color: 0x2a0d08, roughness: 0.6, side: THREE.BackSide });
       // two red wing cases (the dome's halves) hinged along the top seam, the spots painted on
       const elytra: THREE.Group[] = [];
       for (const sideX of [-1, 1]) {
@@ -883,6 +884,11 @@ export class AntView {
         half.position.set(-0.016 * sideX * L, -0.26 * L, -0.28 * L); // a hair apart: the seam shows
         half.scale.set(0.35 * L, 0.32 * L, 0.38 * L);
         hinge.add(half);
+        // its underside: dark, seen when the case is up (the shell alone is one-sided: from below it vanished)
+        const under = new THREE.Mesh(half.geometry, inner);
+        under.position.copy(half.position);
+        under.scale.copy(half.scale);
+        hinge.add(under);
         elytra.push(hinge);
       }
       const body = new THREE.Mesh(ladybugBodyGeometry(), black);
@@ -902,7 +908,7 @@ export class AntView {
         root.visible = false;
         wings.push(root);
       }
-      fly = { elytra, wings, seam: seamMesh, mats: [shellL, black, membrane, shellR] };
+      fly = { elytra, wings, seam: seamMesh, mats: [shellL, black, membrane, shellR, inner] };
     } else if (s[11] === CHAFER) {
       // the rose chafer: metallic green, iridescent, white flecks on its wing cases
       group.add(critterBody('chafer', L));
