@@ -282,7 +282,14 @@ function chaferGeometry() {
   const parts = [
     // the wing cases: broad and flat-topped, square-shouldered, rounded behind
     part(
-      lathed(0.62, (t) => 0.26 * Math.sin(Math.PI * Math.min(1, 0.04 + t * 0.9)) ** 0.3, 0.42, 112, 56),
+      lathed(
+        0.62,
+        // closed at both ends (it was open behind): a round end at the back, square shoulders in front
+        (t) => 0.26 * (0.93 + 0.07 * Math.sin(Math.PI * t)) * (t < 0.35 ? Math.sqrt(1 - ((0.35 - t) / 0.35) ** 2) : t > 0.9 ? Math.sqrt(Math.max(0, 1 - ((t - 0.9) / 0.1) ** 2)) : 1),
+        0.42,
+        112,
+        56,
+      ),
       mtx(0, 0.17, -0.1),
       elytra,
     ),
