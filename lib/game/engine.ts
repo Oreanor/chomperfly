@@ -25,7 +25,7 @@ import { WormSim, type SimInput } from '@/lib/worm/WormSim';
 import { Bot } from '@/lib/worm/Bot';
 import { LEVEL, LEVELS, type LevelName } from '@/lib/worm/levels';
 import { disposeWormView, makeWormView, placeLabel, poseWorm, setLabel, setRainbow, setStunGlow, setWormColor, type WormView } from '@/lib/worm/wormView';
-import { BIG_AT, DEFAULT_NAME, DIG_SPEED, WIN_DEFAULT, WIN_GROWTH, WIN_SIZE_GAIN, antsDrag, damp, girth, L0, N, RADII, r3, winProgress } from '@/lib/worm/constants';
+import { BIG_AT, DEFAULT_NAME, WIN_DEFAULT, WIN_GROWTH, WIN_SIZE_GAIN, antsDrag, damp, girth, L0, N, RADII, r3, winProgress } from '@/lib/worm/constants';
 
 /** What the React UI shows. Kept small: it is compared and re-sent every frame. */
 export type HudState = {
@@ -450,7 +450,7 @@ export function startEngine(o: EngineOptions): Engine {
   let soundWeb = 0;
   let stompIn = 0; // s to the chafer's next footfall
   let stompStep = 0;
-  let chewIn = 0;
+  let chewWave = -1; // the swallowing wave last frame (a new one: a new mouthful)
   let drillIn = 0;
   const earwigWas = new Map<number, THREE.Vector3>();
   const chaferWas = new THREE.Vector3();
@@ -1715,16 +1715,10 @@ export function startEngine(o: EngineOptions): Engine {
       else if (soundMode === 'fly' && sim.mode === 'surface') sound.thud(undefined, 0.8);
       soundMode = sim.mode;
     }
-    // gnawing new flesh (not crawling an old passage, not dragged back along it): a soft crunch every
-    // half second or so, a little more often the faster I go
-    chewIn -= dt;
-    if (sim.gnawing) {
-      const pace = sim.head.distanceTo(soundHead) / Math.max(dt, 1e-3) / (DIG_SPEED * sim.growth);
-      if (pace > 0.2 && chewIn <= 0) {
-        sound.chew(0.2);
-        chewIn = Math.max(0.35, 0.55 / Math.max(1, pace)) * (0.9 + Math.random() * 0.2);
-      }
-    }
+    // gnawing new flesh: a soft crunch with each mouthful — each swallowing wave that starts down the
+    // body (not crawling an old passage, not dragged back along it)
+    if (sim.gnawing && sim.wave >= 0 && (chewWave < 0 || sim.wave < chewWave)) sound.chew(0.2);
+    chewWave = sim.wave;
     soundHead.copy(sim.head);
     if (antsOnMe > 0 && Math.random() < dt * (1.2 + antsOnMe * 0.6)) sound.clicks(sim.head, 2 + Math.floor(Math.random() * 2), 1, 0.22);
     if (webShakes && !soundWeb) sound.twang(sim.head, 0.4);

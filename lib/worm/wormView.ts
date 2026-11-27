@@ -35,9 +35,72 @@ const antennaGeo = new THREE.CylinderGeometry(0.05, 0.07, 1.3, 6).translate(0, 0
 const antennaTipGeo = new THREE.SphereGeometry(0.16, 10, 8);
 const antennaMat = new THREE.MeshStandardMaterial({ color: 0x3a2418, roughness: 0.5 });
 
+/**
+ * The worm's skin: soft and moist, not plastic — a thin wet coat with its own glints, a velvety glow at
+ * the edges (soft living tissue against the light), fine pores and unevenness in the relief.
+ */
+let skinBump: THREE.CanvasTexture | null = null;
+function skinRelief() {
+  if (skinBump) return skinBump;
+  const W = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = W;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(W, W);
+  // soft blotches (a few octaves of smooth noise) and fine pores
+  const rnd = (x: number, y: number) => {
+    const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  const smooth = (x: number, y: number, f: number) => {
+    const fx = (x / W) * f;
+    const fy = (y / W) * f;
+    const ix = Math.floor(fx);
+    const iy = Math.floor(fy);
+    const tx = fx - ix;
+    const ty = fy - iy;
+    const w = (i: number) => ((i % f) + f) % f; // tiles seamlessly
+    const a = rnd(w(ix), w(iy));
+    const b = rnd(w(ix + 1), w(iy));
+    const cc = rnd(w(ix), w(iy + 1));
+    const d = rnd(w(ix + 1), w(iy + 1));
+    const sx = tx * tx * (3 - 2 * tx);
+    const sy = ty * ty * (3 - 2 * ty);
+    return a + (b - a) * sx + (cc - a) * sy + (a - b - cc + d) * sx * sy;
+  };
+  for (let y = 0; y < W; y++) {
+    for (let x = 0; x < W; x++) {
+      let v = 0.55 * smooth(x, y, 6) + 0.3 * smooth(x, y, 14) + 0.15 * smooth(x, y, 40);
+      if (rnd(x * 0.37, y * 0.71) > 0.985) v -= 0.35; // a pore
+      const g = Math.max(0, Math.min(255, v * 255));
+      const i = (y * W + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = g;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  skinBump = new THREE.CanvasTexture(c);
+  skinBump.wrapS = skinBump.wrapT = THREE.RepeatWrapping;
+  skinBump.repeat.set(2, 1);
+  return skinBump;
+}
+function skinMaterial(color: number) {
+  return new THREE.MeshPhysicalMaterial({
+    color,
+    roughness: 0.5,
+    clearcoat: 0.45, // moist
+    clearcoatRoughness: 0.28,
+    sheen: 0.7, // velvety glow at the edges
+    sheenRoughness: 0.45,
+    sheenColor: new THREE.Color(0xfff1e0),
+    bumpMap: skinRelief(),
+    bumpScale: 0.6,
+  });
+}
+
 export function makeWormView(color: number, scene: THREE.Scene): WormView {
   const group = new THREE.Group();
-  const base = new THREE.MeshStandardMaterial({ color, roughness: 0.42 });
+  const base = skinMaterial(color);
   const alt = base.clone();
   alt.color.offsetHSL(0, -0.05, -0.07);
   const segs: THREE.Mesh[] = [];

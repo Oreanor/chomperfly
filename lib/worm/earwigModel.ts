@@ -127,10 +127,10 @@ export function makeEarwig(s = 1): EarwigModel {
   for (const side of [-1, 1]) {
     add(sphere, wingCase, 0.043 * side, 0.08, 0.115, 0.046, 0.022, 0.076, 0.05 * side);
   }
-  add(sphere, segB, 0, 0.1, 0.115, 0.0035, 0.004, 0.07); // the seam between the cases
+  add(sphere, segB, 0, 0.097, 0.115, 0.003, 0.0045, 0.066); // the seam between the cases (sunk into them: a line, not a rod)
   // the neck shield: a rounded plate with a fine line down its middle
   add(sphere, thoraxMat, 0, 0.08, 0.235, 0.074, 0.027, 0.06);
-  add(sphere, segB, 0, 0.105, 0.235, 0.005, 0.004, 0.052);
+  add(sphere, segB, 0, 0.104, 0.235, 0.004, 0.004, 0.045);
   // the head
   on = head;
   add(sphere, headMat, 0, 0.078, 0.33, 0.062, 0.045, 0.06);
