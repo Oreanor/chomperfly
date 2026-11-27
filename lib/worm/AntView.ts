@@ -84,13 +84,14 @@ const shellTextures = () => (shellTex ??= [ladybugShellTexture(-1, LADYBUG_SPOTS
 // its flying wing: a long rounded blade
 const wingShape = (() => {
   const s = new THREE.Shape();
-  s.moveTo(0, -0.12);
-  s.bezierCurveTo(0.35, -0.2, 0.8, -0.32, 1, -0.05);
-  s.bezierCurveTo(1.04, 0.12, 0.7, 0.2, 0.3, 0.14);
-  s.bezierCurveTo(0.1, 0.1, 0, 0.06, 0, -0.12);
+  // a broad base at the body (it grows out from under the wing case), narrowing to a rounded tip
+  s.moveTo(0, -0.24);
+  s.bezierCurveTo(0.35, -0.28, 0.8, -0.34, 1, -0.06);
+  s.bezierCurveTo(1.04, 0.12, 0.7, 0.24, 0.3, 0.22);
+  s.bezierCurveTo(0.1, 0.2, 0, 0.16, 0, -0.24);
   return new THREE.ShapeGeometry(s, 10).rotateX(-Math.PI / 2);
 })();
-const wingMat = new THREE.MeshStandardMaterial({ color: 0xd8c9b0, roughness: 0.25, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false });
+const wingMat = new THREE.MeshStandardMaterial({ color: 0xc9ae84, roughness: 0.25, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false });
 const smooth01 = (x: number) => {
   const t = Math.min(1, Math.max(0, x));
   return t * t * (3 - 2 * t);
@@ -410,7 +411,7 @@ export class AntView {
     const alpha = 1 - smooth01((t - 0.7) / 0.3);
     for (const m of fly.mats) {
       m.transparent = true;
-      m.opacity = m === fly.mats[2] ? 0.4 * alpha : alpha;
+      m.opacity = m === fly.mats[2] ? 0.62 * alpha : alpha;
     }
   }
 
@@ -892,10 +893,10 @@ export class AntView {
       const wings: THREE.Group[] = [];
       for (const sideX of [-1, 1]) {
         const root = new THREE.Group();
-        root.position.set(sideX * 0.05 * L, 0.28 * L, 0.12 * L);
+        root.position.set(sideX * 0.03 * L, 0.27 * L, 0.12 * L);
         group.add(root);
         const w = new THREE.Mesh(wingShape, membrane);
-        w.scale.set(sideX * 0.85 * L, 1, 0.42 * L);
+        w.scale.set(sideX * 0.85 * L, 1, 0.5 * L);
         w.rotation.y = -sideX * 0.35;
         root.add(w);
         root.visible = false;
