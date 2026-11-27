@@ -191,7 +191,7 @@ type Ant = {
   tornSilk?: Set<number>; // thread points it already tore through (by number)
   // a spider weaving an orb web: where it walks next (silk: laying thread on the way; gap: a fresh
   // thread starts there, not joined to the last one), and the pause till the next web
-  orb?: { way: { p: THREE.Vector3; silk: boolean; gap: boolean }[]; i: number; gap: boolean };
+  orb?: { way: { p: THREE.Vector3; silk: boolean; gap: boolean }[]; i: number; drops: THREE.Vector3[] };
   orbCool?: number;
   stunned?: Map<string, number>; // worms it ran over, until when they're safe from it
 };
@@ -989,22 +989,20 @@ export class AntSim {
     }
     let silk = this.threads.get(a.id);
     if (!silk) this.threads.set(a.id, (silk = []));
-    const orb = a.orb;
-    if (orb && !orb.way[orb.i]?.silk) return; // walking back along a spoke: no thread
     const spin = (p: THREE.Vector3) => {
       silk.push(p);
       this.silkTotal.set(a.id, (this.silkTotal.get(a.id) ?? 0) + 1);
       if (silk.length > SILK_POINTS) silk.shift();
     };
-    if (orb?.gap) {
-      // a fresh thread from here (a new spoke, the spiral)
-      orb.gap = false;
-      spin(new THREE.Vector3());
-      spin(a.p.clone());
+    const orb = a.orb;
+    if (orb) {
+      // weaving: the points (and breaks, at the origin) it laid on its way, in order
+      for (const d of orb.drops) spin(d);
+      orb.drops.length = 0;
       return;
     }
     const last = silk[silk.length - 1];
-    if (!last || last.distanceTo(a.p) > (orb ? ORB_STEP : SILK_STEP)) spin(a.p.clone());
+    if (!last || last.distanceTo(a.p) > SILK_STEP) spin(a.p.clone());
   }
 
   /**
@@ -1015,24 +1013,47 @@ export class AntSim {
     const c = a.p.clone();
     const e1 = a.f.clone();
     const e2 = new THREE.Vector3().crossVectors(a.n, e1).normalize();
-    const at = (r: number, th: number) => {
-      const p = c.clone().addScaledVector(e1, r * Math.cos(th)).addScaledVector(e2, r * Math.sin(th));
-      return appleProject(p);
-    };
+    /** A point of the web's plane (x, y from its middle) on the skin. */
+    const at = (x: number, y: number) => appleProject(c.clone().addScaledVector(e1, x).addScaledVector(e2, y));
     const way: NonNullable<Ant['orb']>['way'] = [];
+    /** A straight-ish run of thread from (x0, y0) to (x1, y1), a point every step, sagging `sag` towards the middle. */
+    const run = (x0: number, y0: number, x1: number, y1: number, silk: boolean, sag = 0) => {
+      const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / ORB_STEP));
+      for (let j = 1; j <= n; j++) {
+        const u = j / n;
+        const k = 1 - sag * Math.sin(Math.PI * u);
+        way.push({ p: at((x0 + (x1 - x0) * u) * k, (y0 + (y1 - y0) * u) * k), silk, gap: false });
+      }
+    };
+    // eight spokes like a star: out laying thread, back to the middle without
     const tilt = Math.random() * Math.PI;
-    for (let k = 0; k < 8; k++) {
-      const th = tilt + (k * Math.PI) / 4 + (Math.random() - 0.5) * 0.15;
-      way.push({ p: at(ORB_R * (0.92 + Math.random() * 0.16), th), silk: true, gap: true });
-      way.push({ p: c.clone(), silk: false, gap: false });
+    const ang = Array.from({ length: 8 }, (_, k) => tilt + (k * Math.PI) / 4 + (Math.random() - 0.5) * 0.12);
+    for (const th of ang) {
+      const r = ORB_R * (0.95 + Math.random() * 0.1);
+      const from = way.length;
+      run(0, 0, r * Math.cos(th), r * Math.sin(th), true);
+      way[from].gap = true;
+      run(r * Math.cos(th), r * Math.sin(th), 0, 0, false);
     }
-    const end = ORB_TURNS * 2 * Math.PI;
-    for (let th = 0.3; th <= end; ) {
-      const r = (ORB_R * 0.95 * th) / end;
-      way.push({ p: at(r, tilt + th), silk: true, gap: way[way.length - 1].silk === false });
-      th += ORB_STEP / Math.max(0.15, r); // about a step of thread per waypoint
+    // the spiral, from the middle outwards: straight bits from spoke to spoke, each sagging a little inwards
+    const steps = Math.round(ORB_TURNS * 8);
+    let r = ORB_R * 0.1;
+    const dr = (ORB_R * 0.93 - r) / steps;
+    let x = r * Math.cos(ang[0]);
+    let y = r * Math.sin(ang[0]);
+    way.push({ p: at(x, y), silk: false, gap: false });
+    const from = way.length;
+    for (let i = 1; i <= steps; i++) {
+      r += dr;
+      const th = ang[i % 8];
+      const nx = r * Math.cos(th);
+      const ny = r * Math.sin(th);
+      run(x, y, nx, ny, true, 0.07);
+      x = nx;
+      y = ny;
     }
-    a.orb = { way, i: 0, gap: true };
+    way[from].gap = true;
+    a.orb = { way, i: 0, drops: [new THREE.Vector3(), c.clone()] };
     a.burst = 0;
   }
 
@@ -1049,8 +1070,10 @@ export class AntSim {
         a.p.copy(w.p);
         appleNormal(a.p, a.n);
         go -= dist;
+        if (w.silk) orb.drops.push(w.p.clone());
         orb.i++;
-        if (orb.way[orb.i]?.gap) orb.gap = true;
+        // a fresh thread from here (a new spoke, the spiral): a break, then where it starts
+        if (orb.way[orb.i]?.gap) orb.drops.push(new THREE.Vector3(), w.p.clone());
         continue;
       }
       a.f.copy(d.normalize());

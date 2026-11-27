@@ -7,6 +7,10 @@ type Thread = { total: number; pts: THREE.Vector3[]; line: THREE.LineSegments; g
 const SUB = 5;
 /** How many neighbours on each side even out a point (the spider's path wobbles). */
 const SMOOTH = 2;
+/** A bend sharper than this (radians) stays a corner. */
+const CORNER = 0.55;
+const tA = new THREE.Vector3();
+const tB = new THREE.Vector3();
 /** The glints' scale along the thread, per spun point. */
 const GLINT_STEP = 0.12;
 
@@ -179,27 +183,43 @@ export class Webs {
         run = [];
         return;
       }
-      // even out the wobbles: each point the average of its neighbours (ends kept), at its own height
+      // sharp bends stay sharp (an orb web's spiral turns at each spoke): the corners
+      const corner = run.map((q, i) => {
+        if (i === 0 || i === run.length - 1) return true;
+        tA.subVectors(q, run[i - 1]);
+        tB.subVectors(run[i + 1], q);
+        return tA.angleTo(tB) > CORNER;
+      });
+      // even out the wobbles between them: each point the average of its neighbours, never reaching
+      // past a corner, at its own height
       const smooth = run.map((q, i) => {
-        if (i === 0 || i === run.length - 1) return q.clone();
-        const k = Math.min(SMOOTH, i, run.length - 1 - i);
+        if (corner[i]) return q.clone();
+        let k = 0;
+        while (k < SMOOTH && !corner[i - k] && !corner[i + k]) k++;
         const m = new THREE.Vector3();
         for (let j = i - k; j <= i + k; j++) m.add(run[j]);
         return m.multiplyScalar(1 / (2 * k + 1)).setLength(q.length());
       });
-      const curve = new THREE.CatmullRomCurve3(smooth, false, 'centripetal');
-      const n = (smooth.length - 1) * SUB;
-      let prev: THREE.Vector3 | null = null;
-      let prevA = 0;
-      for (let j = 0; j <= n; j++) {
-        const q = curve.getPoint(j / n, new THREE.Vector3());
-        const at = (runAt + j / SUB) * GLINT_STEP;
-        if (prev) {
-          pos.push(prev.x, prev.y, prev.z, q.x, q.y, q.z);
-          along.push(prevA, at);
+      // a smooth curve from corner to corner
+      let from = 0;
+      for (let to = 1; to < smooth.length; to++) {
+        if (!corner[to]) continue;
+        const piece = smooth.slice(from, to + 1);
+        const curve = piece.length > 2 ? new THREE.CatmullRomCurve3(piece, false, 'centripetal') : null;
+        const n = (piece.length - 1) * SUB;
+        let prev: THREE.Vector3 | null = null;
+        let prevA = 0;
+        for (let j = 0; j <= n; j++) {
+          const q = curve ? curve.getPoint(j / n, new THREE.Vector3()) : new THREE.Vector3().lerpVectors(piece[0], piece[1], j / n);
+          const at = (runAt + from + j / SUB) * GLINT_STEP;
+          if (prev) {
+            pos.push(prev.x, prev.y, prev.z, q.x, q.y, q.z);
+            along.push(prevA, at);
+          }
+          prev = q;
+          prevA = at;
         }
-        prev = q;
-        prevA = at;
+        from = to;
       }
       run = [];
     };
