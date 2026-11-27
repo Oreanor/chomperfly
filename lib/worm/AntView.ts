@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { R0, appleF, appleNormal } from '@/lib/apple';
 import { girth, N, RADII } from './constants';
 import { makeEarwig, poseAbdomen, type EarwigModel } from './earwigModel';
+import { LEG_MATS, critterBody, ladybugBodyGeometry, ladybugBodyMat, ladybugShellMat, ladybugShellTexture } from './critterBodies';
 import {
   ANT, CARRIED, CARRY, CHAFER, CHASE, EARWIG, EARWIG_FLY_IN, FLEE, FLUNG, HOLD, KNOCKED, LADYBUG, LADYBUG_FLY_IN, QUARREL,
   SLAPPED, SPECS, SPIDER, UPTURNED, WANDER, type AntSnap, type Kind,
@@ -29,6 +30,7 @@ const bMid = new THREE.Vector3();
 const bScale = new THREE.Vector3();
 const bQ = new THREE.Quaternion();
 const bM = new THREE.Matrix4();
+const bShade = new THREE.Color();
 const lHip = new THREE.Vector3();
 const lAnkle = new THREE.Vector3();
 const lKnee = new THREE.Vector3();
@@ -60,20 +62,25 @@ const CHAFER_LEGS: LegSpec[] = [
   { hip: [0.1, 0.08, -0.12], foot: [0.42, 0, -0.36], thigh: 0.24, shin: 0.28, tarsus: 0.06, stride: 0.12, lift: 0.05, kneeOut: 1.6, offset: 0, r: 0.022 },
 ];
 const SPIDER_LEGS: LegSpec[] = [
-  { hip: [0.07, 0.16, 0.18], foot: [0.46, 0, 0.46], thigh: 0.36, shin: 0.4, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0, r: 0.02 },
-  { hip: [0.09, 0.16, 0.13], foot: [0.6, 0, 0.16], thigh: 0.36, shin: 0.4, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0.5, r: 0.02 },
-  { hip: [0.09, 0.16, 0.08], foot: [0.58, 0, -0.16], thigh: 0.36, shin: 0.4, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0, r: 0.02 },
-  { hip: [0.07, 0.16, 0.03], foot: [0.44, 0, -0.44], thigh: 0.38, shin: 0.42, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0.5, r: 0.02 },
+  { hip: [0.07, 0.16, 0.18], foot: [0.46, 0, 0.46], thigh: 0.36, shin: 0.4, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0, r: 0.013 },
+  { hip: [0.09, 0.16, 0.13], foot: [0.6, 0, 0.16], thigh: 0.36, shin: 0.4, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0.5, r: 0.013 },
+  { hip: [0.09, 0.16, 0.08], foot: [0.58, 0, -0.16], thigh: 0.36, shin: 0.4, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0, r: 0.013 },
+  { hip: [0.07, 0.16, 0.03], foot: [0.44, 0, -0.44], thigh: 0.38, shin: 0.42, tarsus: 0.07, stride: 0.18, lift: 0.1, kneeOut: 0.25, offset: 0.5, r: 0.013 },
 ];
 
 const sphere = new THREE.SphereGeometry(1, 14, 10);
-const antMat = new THREE.MeshStandardMaterial({ color: 0x1b0f0a, roughness: 0.35, metalness: 0.1 });
 const blackMat = new THREE.MeshStandardMaterial({ color: 0x0e0b0a, roughness: 0.3 });
-const shellMat = new THREE.MeshPhysicalMaterial({ color: 0xd61a0e, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.06 });
-const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.4 });
 // a ladybug's wing cases: the dome's left and right halves (they open to fly)
-const domeLeft = new THREE.SphereGeometry(1, 12, 12, -Math.PI / 2, Math.PI, 0, Math.PI / 2);
-const domeRight = new THREE.SphereGeometry(1, 12, 12, Math.PI / 2, Math.PI, 0, Math.PI / 2);
+const domeLeft = new THREE.SphereGeometry(1, 32, 16, -Math.PI / 2, Math.PI, 0, Math.PI / 2);
+const domeRight = new THREE.SphereGeometry(1, 32, 16, Math.PI / 2, Math.PI, 0, Math.PI / 2);
+/** A ladybug's spots on each wing case: [x, z, radius] (× body length). */
+const LADYBUG_SPOTS = [
+  [0.12, 0.06, 0.06],
+  [0.22, -0.1, 0.07],
+  [0.12, -0.28, 0.055],
+] as const;
+let shellTex: THREE.Texture[] | null = null;
+const shellTextures = () => (shellTex ??= [ladybugShellTexture(-1, LADYBUG_SPOTS), ladybugShellTexture(1, LADYBUG_SPOTS)]);
 // its flying wing: a long rounded blade
 const wingShape = (() => {
   const s = new THREE.Shape();
@@ -89,7 +96,6 @@ const smooth01 = (x: number) => {
   return t * t * (3 - 2 * t);
 };
 const legGeo = new THREE.CylinderGeometry(0.65, 1, 1, 5, 1);
-const legMat = new THREE.MeshStandardMaterial({ color: 0x140b07, roughness: 0.5 });
 // a ladybug's seam: a thin black line arching over its shell from front to back
 const seam = new THREE.TubeGeometry(
   new THREE.CatmullRomCurve3(
@@ -102,7 +108,6 @@ const seam = new THREE.TubeGeometry(
   0.008,
   5,
 );
-const spiderMat = new THREE.MeshStandardMaterial({ color: 0x2a2420, roughness: 0.55 });
 const MAX_BONES = 26;
 
 type AntMesh = {
@@ -812,55 +817,27 @@ export class AntView {
       return m;
     };
     if (s[11] === LADYBUG) {
-      // its own materials (it fades in as it flies in)
-      const shell = shellMat.clone();
-      const black = blackMat.clone();
-      const white = whiteMat.clone();
+      // its own materials (it fades in as it flies in): a textured shell for each wing case, a glossy black body
+      const [texL, texR] = shellTextures();
+      const shellL = ladybugShellMat(texL);
+      const shellR = ladybugShellMat(texR);
+      const black = ladybugBodyMat();
       const membrane = wingMat.clone();
-      // two red wing cases (the dome's halves) hinged along the top seam, black spots on them
+      // two red wing cases (the dome's halves) hinged along the top seam, the spots painted on
       const elytra: THREE.Group[] = [];
       for (const sideX of [-1, 1]) {
         const hinge = new THREE.Group();
         hinge.position.set(0.02 * sideX * L, 0.3 * L, 0.2 * L);
         group.add(hinge);
-        const half = new THREE.Mesh(sideX < 0 ? domeLeft : domeRight, shell);
+        const half = new THREE.Mesh(sideX < 0 ? domeLeft : domeRight, sideX < 0 ? shellL : shellR);
         half.position.set(-0.02 * sideX * L, -0.26 * L, -0.28 * L);
         half.scale.set(0.35 * L, 0.32 * L, 0.38 * L);
         hinge.add(half);
-        for (const [sx, z, r] of [
-          [0.12, 0.06, 0.06],
-          [0.22, -0.1, 0.07],
-          [0.12, -0.28, 0.055],
-        ] as const) {
-          const x = sx * sideX;
-          const y = 0.04 + 0.32 * Math.sqrt(Math.max(0, 1 - (x / 0.35) ** 2 - ((z + 0.08) / 0.38) ** 2));
-          const spot = new THREE.Mesh(sphere, black);
-          spot.position.set(x * L - 0.02 * sideX * L, (y - 0.3) * L, (z - 0.2) * L);
-          spot.scale.set(r * L, 0.02 * L, r * L);
-          // lying on the dome
-          const n = new THREE.Vector3(x / 0.35 ** 2, (y - 0.04) / 0.32 ** 2, (z + 0.08) / 0.38 ** 2).normalize();
-          spot.quaternion.setFromUnitVectors(UP, n);
-          spot.position.addScaledVector(n, -0.008 * L);
-          hinge.add(spot);
-        }
         elytra.push(hinge);
       }
-      add(sphere, black, 0, 0.33, 0.15, 0.06, 0.02, 0.05); // the spot up front
-      add(sphere, black, 0, 0.14, 0.27, 0.22, 0.13, 0.12); // the neck shield…
-      for (const x of [-1, 1]) add(sphere, white, 0.14 * x, 0.17, 0.3, 0.07, 0.05, 0.06); // …with its white patches
-      add(sphere, black, 0, 0.09, 0.38, 0.1, 0.075, 0.08); // head
-      for (const x of [-1, 1]) add(sphere, white, 0.06 * x, 0.11, 0.43, 0.025, 0.02, 0.02); // its eyes
-      add(sphere, black, 0, 0.04, -0.06, 0.32, 0.05, 0.37); // underside
-      add(sphere, black, 0, 0.1, -0.07, 0.26, 0.15, 0.32); // body under the dome
-      for (const [z, w] of [
-        [0.06, 0.24],
-        [-0.06, 0.25],
-        [-0.18, 0.22],
-        [-0.28, 0.16],
-      ] as const) {
-        add(sphere, black, 0, 0.13, z, w, 0.12, 0.035); // its belly rings
-      }
-      add(sphere, black, 0, 0.16, 0.15, 0.17, 0.12, 0.09);
+      const body = new THREE.Mesh(ladybugBodyGeometry(), black);
+      body.scale.setScalar(L);
+      group.add(body);
       const seamMesh = add(seam, black, 0, 0, 0, 1, 1, 1); // the seam between the wing cases
       // thin see-through flying wings, folded away under the cases
       const wings: THREE.Group[] = [];
@@ -875,48 +852,24 @@ export class AntView {
         root.visible = false;
         wings.push(root);
       }
-      fly = { elytra, wings, seam: seamMesh, mats: [shell, black, membrane, white] };
+      fly = { elytra, wings, seam: seamMesh, mats: [shellL, black, membrane, shellR] };
     } else if (s[11] === CHAFER) {
       // the rose chafer: metallic green, iridescent, white flecks on its wing cases
-      const shell = new THREE.MeshPhysicalMaterial({ color: 0x2f9a3c, metalness: 0.7, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.08, iridescence: 0.7, iridescenceIOR: 1.7, envMapIntensity: 1.6 });
-      const dark = new THREE.MeshStandardMaterial({ color: 0x0f2414, roughness: 0.4, metalness: 0.3 });
-      const fleck = new THREE.MeshStandardMaterial({ color: 0xf2f2e8, roughness: 0.6 });
-      add(sphere, dark, 0, 0.1, -0.02, 0.3, 0.08, 0.38); // underside
-      for (const x of [-1, 1]) add(sphere, shell, 0.1 * x, 0.17, -0.08, 0.17, 0.15, 0.34); // wing cases
-      add(sphere, shell, 0, 0.18, -0.08, 0.26, 0.15, 0.36);
-      add(sphere, dark, 0, 0.325, -0.06, 0.008, 0.008, 0.3); // the seam
-      add(sphere, shell, 0, 0.17, 0.25, 0.2, 0.12, 0.13); // the neck shield
-      add(sphere, shell, 0, 0.27, 0.15, 0.045, 0.03, 0.06); // the shield between the cases
-      add(sphere, dark, 0, 0.12, 0.38, 0.08, 0.06, 0.08); // head
-      for (const [x, z] of [
-        [0.12, -0.05],
-        [-0.13, -0.1],
-        [0.08, -0.25],
-        [-0.07, -0.22],
-        [0.16, -0.18],
-        [-0.17, 0.02],
-      ] as const) {
-        add(sphere, fleck, x, 0.315 - 0.25 * Math.abs(x), z, 0.025, 0.006, 0.012).rotation.y = x * 4;
-      }
+      group.add(critterBody('chafer', L));
     } else if (s[11] === EARWIG) {
       earwig = makeEarwig(L / 1.06);
       group.add(earwig.group);
     } else if (s[11] === SPIDER) {
-      // small head-chest, big round abdomen, dark
-      add(sphere, spiderMat, 0, 0.16, 0.12, 0.13, 0.1, 0.14);
-      add(sphere, spiderMat, 0, 0.2, -0.18, 0.2, 0.17, 0.24);
+      group.add(critterBody('spider', L));
     } else {
-      for (const [z, r, lenK] of [
-        [0.3, 0.07, 1],
-        [0.05, 0.065, 1.2],
-        [-0.25, 0.1, 1.5],
-      ] as const) {
-        add(sphere, antMat, 0, r * 1.2, z, r * 1.6, r * 1.4, r * 1.6 * lenK);
-      }
+      group.add(critterBody('ant', L));
     }
     // legs (and feelers): instanced tapering bones
+    const legMat = s[11] === LADYBUG ? LEG_MATS.ladybug : s[11] === SPIDER ? LEG_MATS.spider : s[11] === CHAFER ? LEG_MATS.chafer : LEG_MATS.ant;
     const legs = new THREE.InstancedMesh(legGeo, legMat, MAX_BONES);
     legs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // a shade per segment (from the start: the shader has to know there are instance colours)
+    legs.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_BONES * 3).fill(1), 3);
     legs.frustumCulled = false;
     legs.count = 0;
     group.add(legs);
@@ -947,14 +900,16 @@ export class AntView {
   private poseLegs(a: AntMesh, L: number, kind: Kind) {
     if (kind === EARWIG) return; // its own legs (poseEarwig)
     let n = 0;
-    const bone = (from: THREE.Vector3, to: THREE.Vector3, r: number) => {
+    /** One leg segment, its shade (× the leg colour: a spider's legs are banded, joints darker). */
+    const bone = (from: THREE.Vector3, to: THREE.Vector3, r: number, shade = 1) => {
       bDir.subVectors(to, from);
       const len = bDir.length();
       if (len < 1e-6) return;
       bMid.addVectors(from, to).multiplyScalar(0.5);
       bQ.setFromUnitVectors(UP, bDir.divideScalar(len));
       bScale.set(r * L, len, r * L);
-      a.legs.setMatrixAt(n++, bM.compose(bMid, bQ, bScale));
+      a.legs.setMatrixAt(n, bM.compose(bMid, bQ, bScale));
+      a.legs.setColorAt(n++, bShade.setScalar(shade));
     };
     const spider = kind === SPIDER;
     const specs = spider ? SPIDER_LEGS : kind === LADYBUG ? LADYBUG_LEGS : kind === CHAFER ? CHAFER_LEGS : ANT_LEGS;
@@ -1001,9 +956,9 @@ export class AntView {
         lOut.set(sd * leg.kneeOut, 1, 0);
         lOut.addScaledVector(lReach, -lOut.dot(lReach)).normalize();
         const knee = lKnee.copy(hip).addScaledVector(lReach, along).addScaledVector(lOut, h);
-        bone(hip, knee, leg.r);
-        bone(knee, ankle, leg.r * 0.75);
-        bone(ankle, foot, leg.r * 0.5);
+        bone(hip, knee, leg.r, 1);
+        bone(knee, ankle, leg.r * 0.75, spider ? 0.55 : 0.8);
+        bone(ankle, foot, leg.r * 0.5, spider ? 0.85 : 0.65);
       }
     }
     if (!spider) {
@@ -1025,6 +980,7 @@ export class AntView {
     }
     a.legs.count = n;
     a.legs.instanceMatrix.needsUpdate = true;
+    if (a.legs.instanceColor) a.legs.instanceColor.needsUpdate = true;
   }
 
   dispose() {

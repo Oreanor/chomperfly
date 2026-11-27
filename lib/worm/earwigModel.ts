@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { chitinBump } from './critterBodies';
 
 // The earwig: a long segmented body, a head with long feelers, pincers at the tail end that can
 // swing forward over its back like a scorpion's, folded fan-wings (open in flight), six legs.
@@ -19,18 +20,27 @@ const plate = (() => {
   g.computeVertexNormals();
   return g;
 })();
-const segA = new THREE.MeshPhysicalMaterial({ color: 0x4e1d10, roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.2 });
-const segB = new THREE.MeshPhysicalMaterial({ color: 0x3a150b, roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.2 });
-const wingCase = new THREE.MeshPhysicalMaterial({ color: 0x8f7c63, roughness: 0.45, clearcoat: 0.4, clearcoatRoughness: 0.3 });
-const pale = new THREE.MeshStandardMaterial({ color: 0xcbbd9e, roughness: 0.5 });
+const segA = new THREE.MeshPhysicalMaterial({ color: 0x55220f, roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2 });
+const segB = new THREE.MeshPhysicalMaterial({ color: 0x481c0d, roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2 });
+const wingCase = new THREE.MeshPhysicalMaterial({ color: 0x6a4024, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.3 });
+const pale = new THREE.MeshStandardMaterial({ color: 0x8c6a46, roughness: 0.5 });
 const feelerDark = new THREE.MeshStandardMaterial({ color: 0x6a3418, roughness: 0.45 });
-const legMat = new THREE.MeshStandardMaterial({ color: 0xdcaa62, roughness: 0.45 }); // pale legs, pale feeler tips
-const headMat = new THREE.MeshPhysicalMaterial({ color: 0x8a2c16, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
-const thoraxMat = new THREE.MeshPhysicalMaterial({ color: 0x3b2b22, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.25 });
-const pincerMat = new THREE.MeshPhysicalMaterial({ color: 0x8e3a18, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+const legMat = new THREE.MeshStandardMaterial({ color: 0x8a5526, roughness: 0.42 }); // amber legs and feeler tips
+const headMat = new THREE.MeshPhysicalMaterial({ color: 0x7a2a12, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+const thoraxMat = new THREE.MeshPhysicalMaterial({ color: 0x4a2a17, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.25 });
+const pincerMat = new THREE.MeshPhysicalMaterial({ color: 0x7e3414, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
 let wingTex: THREE.CanvasTexture | null = null;
 const wingMat = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, depthWrite: false });
 const eyeMat = new THREE.MeshStandardMaterial({ color: 0x0a0605, roughness: 0.2 });
+
+/** Fine relief of the armour on every hard part (once, on the first earwig: it needs a document). */
+function addRelief() {
+  if (segA.bumpMap) return;
+  for (const m of [segA, segB, wingCase, headMat, thoraxMat, pincerMat]) {
+    m.bumpMap = chitinBump();
+    m.bumpScale = 0.5;
+  }
+}
 
 const HEAD_AT = new THREE.Vector3(0, 0.07, 0.28); // the head's pivot
 const PINCERS_AT = new THREE.Vector3(0, 0.055, -0.4); // the pincers' pivot
@@ -78,6 +88,7 @@ function wingTexture() {
 }
 
 export function makeEarwig(s = 1): EarwigModel {
+  addRelief();
   const group = new THREE.Group();
   const head = new THREE.Group();
   head.position.copy(HEAD_AT).multiplyScalar(s);
@@ -123,7 +134,7 @@ export function makeEarwig(s = 1): EarwigModel {
   SEGS.forEach(([, w], i) => {
     const m = new THREE.Mesh(sphere, i % 2 ? segA : segB);
     m.position.set(0, -0.001 * i * s, -0.01 * s);
-    m.scale.set(w * s, 0.045 * s, 0.06 * s);
+    m.scale.set(w * s, 0.036 * s, 0.07 * s);
     m.castShadow = true;
     abdomen[i].add(m);
   });
@@ -203,7 +214,7 @@ export function makeEarwig(s = 1): EarwigModel {
     wings.push(w);
   }
   // six legs: thigh and shin, each pair on a pivot (they step in two tripods)
-  const legGeo = new THREE.CylinderGeometry(1, 0.8, 1, 6).translate(0, 0.5, 0);
+  const legGeo = new THREE.CylinderGeometry(1, 0.75, 1, 8).translate(0, 0.5, 0);
   const bone = (to: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3, r: number) => {
     const m = new THREE.Mesh(legGeo, legMat);
     const d = new THREE.Vector3().subVectors(b, a);
