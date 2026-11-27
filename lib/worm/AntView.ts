@@ -524,8 +524,8 @@ export class AntView {
   private poseWings(fly: NonNullable<AntMesh['fly']>, cases: number, wings: number) {
     for (let i = 0; i < 2; i++) {
       const s = i ? 1 : -1;
-      // thrown wide open, up and out to the sides (as a ladybug takes off)
-      fly.elytra[i].rotation.set(0.45 * cases, 0.5 * s * cases, 1.2 * s * cases);
+      // spread out to the sides in a V (their rear ends swing outwards), lifted a little
+      fly.elytra[i].rotation.set(0.35 * cases, -0.85 * s * cases, 0.55 * s * cases);
     }
     fly.seam.visible = cases < 0.02;
     const now = performance.now();
