@@ -22,7 +22,7 @@ const plate = (() => {
 })();
 const segA = new THREE.MeshPhysicalMaterial({ color: 0x55220f, roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2 });
 const segB = new THREE.MeshPhysicalMaterial({ color: 0x481c0d, roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2 });
-const wingCase = new THREE.MeshPhysicalMaterial({ color: 0x6a4024, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.3 });
+const wingCase = new THREE.MeshPhysicalMaterial({ color: 0x6a4024, roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.5 });
 const pale = new THREE.MeshStandardMaterial({ color: 0x8c6a46, roughness: 0.5 });
 const feelerDark = new THREE.MeshStandardMaterial({ color: 0x6a3418, roughness: 0.45 });
 const legMat = new THREE.MeshStandardMaterial({ color: 0x8a5526, roughness: 0.42 }); // amber legs and feeler tips
@@ -214,7 +214,7 @@ export function makeEarwig(s = 1): EarwigModel {
     wings.push(w);
   }
   // six legs: thigh and shin, each pair on a pivot (they step in two tripods)
-  const legGeo = new THREE.CylinderGeometry(1, 0.75, 1, 8).translate(0, 0.5, 0);
+  const legGeo = new THREE.CylinderGeometry(0.75, 1, 1, 8, 1, true).translate(0, 0.5, 0);
   const bone = (to: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3, r: number) => {
     const m = new THREE.Mesh(legGeo, legMat);
     const d = new THREE.Vector3().subVectors(b, a);
@@ -223,6 +223,13 @@ export function makeEarwig(s = 1): EarwigModel {
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
     m.castShadow = true;
     to.add(m);
+    // a ball at each end closes the joint
+    for (const [p, k] of [[a, 1.05], [b, 0.8]] as const) {
+      const j = new THREE.Mesh(sphere, legMat);
+      j.position.copy(p);
+      j.scale.setScalar(r * k);
+      to.add(j);
+    }
   };
   const legs: EarwigModel['legs'] = [];
   for (const side of [-1, 1]) {
@@ -251,12 +258,13 @@ export function makeEarwig(s = 1): EarwigModel {
  * Curls the abdomen: curl lifts it (and the pincers) up over the back, yaw swings it sideways,
  * reach stretches its rear segments (to reach out with the pincers).
  */
-export function poseAbdomen(m: EarwigModel, curl: number, yaw: number, reach: number) {
+/** `droop`: how much each segment bends down (radians), to lie along the round fruit. */
+export function poseAbdomen(m: EarwigModel, curl: number, yaw: number, reach: number, droop = 0) {
   const each = yaw / Math.max(1, m.abdomen.length - 2);
   m.abdomen.forEach((g, i) => {
     g.userData.z ??= g.position.z;
     if (i >= 2) g.position.z = g.userData.z * reach;
-    if (i < 2) return g.rotation.set(0, 0, 0);
-    g.rotation.set(curl * 0.52, each, 0);
+    if (i < 2) return g.rotation.set(i ? -droop : 0, 0, 0);
+    g.rotation.set(curl * 0.52 - droop, each, 0);
   });
 }

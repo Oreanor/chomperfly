@@ -95,24 +95,30 @@ const smooth01 = (x: number) => {
   const t = Math.min(1, Math.max(0, x));
   return t * t * (3 - 2 * t);
 };
-const legGeo = new THREE.CylinderGeometry(0.65, 1, 1, 5, 1);
-// a ladybug's seam: a thin black line arching over its shell from front to back
+const legGeo = new THREE.CylinderGeometry(0.65, 1, 1, 8, 1);
+// a ball at the start of every bone: closes the joints where two bones meet at an angle
+const jointGeo = new THREE.SphereGeometry(1, 10, 8);
+// a ladybug's seam: a thin black line arching over its shell from front to back, lying on the
+// shell (the dome: center (0, 0.04, -0.08), radii 0.32 up, 0.38 along)
 const seam = new THREE.TubeGeometry(
   new THREE.CatmullRomCurve3(
-    Array.from({ length: 13 }, (_, i) => {
-      const t = (i / 12) * Math.PI;
-      return new THREE.Vector3(0, 0.04 + 0.3 * 1.015 * Math.sin(t), -0.05 + 0.42 * 1.015 * Math.cos(t));
+    Array.from({ length: 25 }, (_, i) => {
+      const t = (i / 24) * Math.PI;
+      return new THREE.Vector3(0, 0.04 + 0.32 * 1.004 * Math.sin(t), -0.08 + 0.38 * 1.004 * Math.cos(t));
     }),
   ),
-  24,
-  0.008,
-  5,
+  48,
+  0.006,
+  6,
 );
 const MAX_BONES = 26;
 
 type AntMesh = {
   group: THREE.Group;
   legs: THREE.InstancedMesh;
+  joints: THREE.InstancedMesh;
+  /** On the fruit's skin: how far it is drawn sunk (its feet reach down to the curved skin). */
+  skin?: number;
   p: THREE.Vector3; // drawn position
   f: THREE.Vector3;
   snap: AntSnap;
@@ -198,6 +204,7 @@ export class AntView {
       if (alive.has(id)) continue;
       this.group.remove(a.group);
       a.legs.dispose(); // legs are per critter, the rest is shared
+      a.joints.dispose();
       for (const m of a.fade ?? []) m.dispose();
       this.ants.delete(id);
     }
@@ -296,7 +303,7 @@ export class AntView {
       a.curl = (a.curl ?? 0) + (curl - (a.curl ?? 0)) * k;
       a.yaw = (a.yaw ?? 0) + (yaw - (a.yaw ?? 0)) * k;
       a.reach = (a.reach ?? 1) + ((holding ? Math.min(a.reach ?? 1, 1.4) : 1) - (a.reach ?? 1)) * k;
-      poseAbdomen(e, a.curl, a.yaw, a.reach);
+      poseAbdomen(e, a.curl, a.yaw, a.reach, a.skin !== undefined ? (0.07 * len) / 1.06 / R0 : 0);
     }
     if (act === 6) {
       const k = 1 - amount;
@@ -582,6 +589,7 @@ export class AntView {
       const len = SPECS[s[11]].len;
       const body = s[1] === HOLD ? wormBody(s[8]) : null;
       let sink = 0; // how far its middle sinks below the curved skin (a long body on a round fruit)
+      let skin: number | undefined;
       if (s[1] === HOLD && a.lastState !== HOLD) {
         a.attachFrom = a.p.clone();
         a.attachT = 0;
@@ -654,7 +662,10 @@ export class AntView {
         this.up.copy(a.p).normalize();
         if (!s[12] && Math.abs(appleF(a.p)) < 0.3) {
           appleNormal(a.p, this.up);
-          sink = (0.5 * len) ** 2 / (2 * R0); // a body this long on a ball this round
+          // a rigid body this long on a ball this round sinks a little in the middle (its ends touch);
+          // the earwig bends its abdomen along the skin instead, so it stands just on its legs
+          sink = s[11] === EARWIG ? 0.04 : (0.5 * len) ** 2 / (2 * R0);
+          skin = sink;
         }
         if (s[12]) {
           // inside (the drilling earwig): walk on the floor (towards the fruit's center)
@@ -675,6 +686,7 @@ export class AntView {
       const knocked = s[1] === FLEE && s[10] > 0 && s[10] < 1 ? s[10] : 0; // swatted: flying through the air
       const feelersUp = s[11] === ANT && s[1] === WANDER && s[10] === 1; // milling / guarding
       a.group.position.copy(a.p).addScaledVector(this.up, 0.03 - sink);
+      a.skin = s[12] ? undefined : skin;
       // legs step as far as the critter moves (still when it stops); holding on / carrying they scramble
       const moved = a.group.userData.prev ? a.group.position.distanceTo(a.group.userData.prev) : 0;
       a.group.userData.prev = a.group.position.clone();
@@ -830,7 +842,7 @@ export class AntView {
         hinge.position.set(0.02 * sideX * L, 0.3 * L, 0.2 * L);
         group.add(hinge);
         const half = new THREE.Mesh(sideX < 0 ? domeLeft : domeRight, sideX < 0 ? shellL : shellR);
-        half.position.set(-0.02 * sideX * L, -0.26 * L, -0.28 * L);
+        half.position.set(-0.016 * sideX * L, -0.26 * L, -0.28 * L); // a hair apart: the seam shows
         half.scale.set(0.35 * L, 0.32 * L, 0.38 * L);
         hinge.add(half);
         elytra.push(hinge);
@@ -873,6 +885,12 @@ export class AntView {
     legs.frustumCulled = false;
     legs.count = 0;
     group.add(legs);
+    const joints = new THREE.InstancedMesh(jointGeo, legMat, MAX_BONES);
+    joints.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    joints.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_BONES * 3).fill(1), 3);
+    joints.frustumCulled = false;
+    joints.count = 0;
+    group.add(joints);
     this.group.add(group);
     group.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) o.castShadow = true;
@@ -880,6 +898,7 @@ export class AntView {
     return {
       group,
       legs,
+      joints,
       p: new THREE.Vector3(s[2], s[3], s[4]),
       f: new THREE.Vector3(s[5], s[6], s[7]),
       snap: s,
@@ -909,7 +928,9 @@ export class AntView {
       bQ.setFromUnitVectors(UP, bDir.divideScalar(len));
       bScale.set(r * L, len, r * L);
       a.legs.setMatrixAt(n, bM.compose(bMid, bQ, bScale));
-      a.legs.setColorAt(n++, bShade.setScalar(shade));
+      a.legs.setColorAt(n, bShade.setScalar(shade));
+      a.joints.setMatrixAt(n, bM.compose(from, bQ, bScale.setScalar(r * L * 1.05)));
+      a.joints.setColorAt(n++, bShade);
     };
     const spider = kind === SPIDER;
     const specs = spider ? SPIDER_LEGS : kind === LADYBUG ? LADYBUG_LEGS : kind === CHAFER ? CHAFER_LEGS : ANT_LEGS;
@@ -940,6 +961,8 @@ export class AntView {
         }
         const hip = lHip.set(sd * leg.hip[0], leg.hip[1], leg.hip[2]).multiplyScalar(L);
         const foot = lFoot.set(sd * leg.foot[0], lift, leg.foot[2] + dz).multiplyScalar(L);
+        // on the round fruit the skin falls away from under its middle: the foot reaches down to it
+        if (a.skin !== undefined) foot.y += a.skin - 0.03 - (foot.x * foot.x + foot.z * foot.z) / (2 * R0);
         const ankle = lAnkle.set(foot.x - sd * leg.tarsus * 0.35 * L, foot.y + leg.tarsus * L, foot.z);
         const a1 = leg.thigh * L;
         const a2 = leg.shin * L;
@@ -978,9 +1001,11 @@ export class AntView {
         bone(elbow, tip, 0.007);
       }
     }
-    a.legs.count = n;
-    a.legs.instanceMatrix.needsUpdate = true;
-    if (a.legs.instanceColor) a.legs.instanceColor.needsUpdate = true;
+    a.legs.count = a.joints.count = n;
+    for (const m of [a.legs, a.joints]) {
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    }
   }
 
   dispose() {

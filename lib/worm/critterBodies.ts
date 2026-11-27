@@ -398,7 +398,6 @@ export function ladybugBodyGeometry() {
     part(ellipsoid(0.1, 0.075, 0.08, 20, 14), mtx(0, 0.09, 0.38, 0.35), (p) => (Math.abs(p.x) > 0.035 && p.y > 0.1 && p.z > 0.4 ? white.clone() : black.clone())), // head
     part(ellipsoid(0.32, 0.06, 0.37, 32, 12), mtx(0, 0.05, -0.06), () => black.clone()), // underside
     part(ellipsoid(0.27, 0.14, 0.33, 32, 16), mtx(0, 0.11, -0.07), () => black.clone()), // body under the dome
-    part(ellipsoid(0.06, 0.02, 0.05, 12, 8), mtx(0, 0.33, 0.15), () => black.clone()), // the little shield between the cases
   ];
   ladyGeo = merge(parts);
   return ladyGeo;
