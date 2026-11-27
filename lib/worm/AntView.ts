@@ -89,9 +89,49 @@ const wingShape = (() => {
   s.bezierCurveTo(0.35, -0.28, 0.8, -0.34, 1, -0.06);
   s.bezierCurveTo(1.04, 0.12, 0.7, 0.24, 0.3, 0.22);
   s.bezierCurveTo(0.1, 0.2, 0, 0.16, 0, -0.24);
-  return new THREE.ShapeGeometry(s, 10).rotateX(-Math.PI / 2);
+  const g = new THREE.ShapeGeometry(s, 10);
+  // its texture across the whole wing: u along it, v across (the shape spans y −0.34…0.24)
+  const uv = g.getAttribute('uv');
+  for (let i = 0; i < uv.count; i++) uv.setY(i, (uv.getY(i) + 0.34) / 0.58);
+  return g.rotateX(-Math.PI / 2);
 })();
-const wingMat = new THREE.MeshStandardMaterial({ color: 0xc9ae84, roughness: 0.25, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false });
+const wingMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false });
+/** A ladybug's flying wing: amber, see-through, dark veins running out from its base, a darker leading edge. */
+let veins: THREE.CanvasTexture | null = null;
+function wingVeins() {
+  if (veins) return veins;
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = 'rgb(196,160,110)';
+  ctx.fillRect(0, 0, 256, 128);
+  ctx.strokeStyle = 'rgb(70,40,20)';
+  // the veins: from the base (left, middle) fanning out towards the tip
+  for (const [y1, w] of [
+    [10, 4],
+    [40, 2.5],
+    [70, 2],
+    [100, 1.6],
+    [122, 1.4],
+  ] as const) {
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(0, 64);
+    ctx.quadraticCurveTo(90, 64 + (y1 - 64) * 0.3, 250, y1);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1;
+  for (let x = 60; x < 250; x += 45) {
+    ctx.beginPath();
+    ctx.moveTo(x, 20);
+    ctx.lineTo(x + 15, 110);
+    ctx.stroke();
+  }
+  veins = new THREE.CanvasTexture(c);
+  veins.colorSpace = THREE.SRGBColorSpace;
+  return veins;
+}
 const smooth01 = (x: number) => {
   const t = Math.min(1, Math.max(0, x));
   return t * t * (3 - 2 * t);
@@ -484,7 +524,8 @@ export class AntView {
   private poseWings(fly: NonNullable<AntMesh['fly']>, cases: number, wings: number) {
     for (let i = 0; i < 2; i++) {
       const s = i ? 1 : -1;
-      fly.elytra[i].rotation.set(0.5 * cases, 0.25 * s * cases, 0.75 * s * cases);
+      // thrown wide open, up and out to the sides (as a ladybug takes off)
+      fly.elytra[i].rotation.set(0.45 * cases, 0.5 * s * cases, 1.2 * s * cases);
     }
     fly.seam.visible = cases < 0.02;
     const now = performance.now();
@@ -873,6 +914,7 @@ export class AntView {
       const shellR = ladybugShellMat(texR);
       const black = ladybugBodyMat();
       const membrane = wingMat.clone();
+      membrane.map = wingVeins();
       const inner = new THREE.MeshStandardMaterial({ color: 0x2a0d08, roughness: 0.6, side: THREE.BackSide });
       // two red wing cases (the dome's halves) hinged along the top seam, the spots painted on
       const elytra: THREE.Group[] = [];
@@ -902,7 +944,7 @@ export class AntView {
         root.position.set(sideX * 0.03 * L, 0.27 * L, 0.12 * L);
         group.add(root);
         const w = new THREE.Mesh(wingShape, membrane);
-        w.scale.set(sideX * 0.85 * L, 1, 0.5 * L);
+        w.scale.set(sideX * 1.05 * L, 1, 0.55 * L);
         w.rotation.y = -sideX * 0.35;
         root.add(w);
         root.visible = false;
