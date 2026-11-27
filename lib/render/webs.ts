@@ -5,10 +5,10 @@ type Thread = { total: number; pts: THREE.Vector3[]; line: THREE.LineSegments; b
 
 /** Samples drawn per spun segment (the thread is a smooth curve through the points). */
 const SUB = 5;
-/** How high a strand arches between two of its anchor points (× the span). */
-const ARCH = 0.12;
-const tUp = new THREE.Vector3();
-const tA = new THREE.Vector3();
+/** How many neighbours on each side even out a point (the spider's path wobbles). */
+const SMOOTH = 2;
+/** The glints' scale along the thread, per spun point. */
+const GLINT_STEP = 0.12;
 
 /**
  * Silk: a fine thread that is almost invisible except where it catches the light — glints that slide
@@ -192,53 +192,56 @@ export class Webs {
   }
 
   /**
-   * The thread as a smooth curve through its points, strung in little arches from one anchor point to
-   * the next (none across a break), and dew beads on it here and there.
+   * The thread as a smooth, taut curve through its points (the spider's little wobbles evened out; none
+   * across a break), and dew beads on it here and there. Beads and glints are tied to the points
+   * themselves (their index in all the silk ever spun), so they stay put as the thread grows.
    */
   private redraw(t: Thread) {
     const pos: number[] = [];
     const along: number[] = [];
     const beads: number[] = [];
-    // the runs between breaks
+    const first = t.total - t.pts.length; // the index of pts[0] in all the silk ever spun
     let run: THREE.Vector3[] = [];
-    let dist = 0;
+    let runAt = 0;
     const flush = () => {
       if (run.length < 2) {
         run = [];
         return;
       }
-      const curve = new THREE.CatmullRomCurve3(run, false, 'centripetal');
-      const n = (run.length - 1) * SUB;
+      // even out the wobbles: each point the average of its neighbours (ends kept), at its own height
+      const smooth = run.map((q, i) => {
+        if (i === 0 || i === run.length - 1) return q.clone();
+        const k = Math.min(SMOOTH, i, run.length - 1 - i);
+        const m = new THREE.Vector3();
+        for (let j = i - k; j <= i + k; j++) m.add(run[j]);
+        return m.multiplyScalar(1 / (2 * k + 1)).setLength(q.length());
+      });
+      const curve = new THREE.CatmullRomCurve3(smooth, false, 'centripetal');
+      const n = (smooth.length - 1) * SUB;
       let prev: THREE.Vector3 | null = null;
+      let prevA = 0;
       for (let j = 0; j <= n; j++) {
-        const seg = Math.min(run.length - 2, Math.floor(j / SUB));
-        const u = j / SUB - seg;
-        const span = run[seg].distanceTo(run[seg + 1]);
         const q = curve.getPoint(j / n, new THREE.Vector3());
-        q.addScaledVector(tUp.copy(q).normalize(), Math.sin(Math.PI * u) * ARCH * span);
+        const at = (runAt + j / SUB) * GLINT_STEP;
         if (prev) {
           pos.push(prev.x, prev.y, prev.z, q.x, q.y, q.z);
-          along.push(dist);
-          dist += prev.distanceTo(q);
-          along.push(dist);
+          along.push(prevA, at);
         }
         prev = q;
+        prevA = at;
       }
-      // dew: on every other anchor, and now and then hanging mid-span
-      for (let i = 0; i < run.length; i++) {
-        const h = Math.abs(Math.sin(i * 12.9898 + t.pts.length * 0.1) * 43758.5453) % 1;
-        if (i % 2 === 0 || h < 0.3) {
-          tA.copy(run[i]);
-          if (i < run.length - 1 && h < 0.3) tA.lerp(run[i + 1], 0.5).addScaledVector(tUp.copy(tA).normalize(), ARCH * run[i].distanceTo(run[i + 1]));
-          beads.push(tA.x, tA.y, tA.z);
-        }
+      // dew on about one point in five, chosen by the point itself
+      for (let i = 0; i < smooth.length; i++) {
+        const h = Math.abs(Math.sin((runAt + i) * 12.9898) * 43758.5453) % 1;
+        if (h < 0.2) beads.push(smooth[i].x, smooth[i].y, smooth[i].z);
       }
       run = [];
     };
-    for (const p of t.pts) {
-      if (isGap(p)) flush();
-      else run.push(p);
-    }
+    t.pts.forEach((q, i) => {
+      if (isGap(q)) return flush();
+      if (!run.length) runAt = first + i;
+      run.push(q);
+    });
     flush();
     t.line.geometry.dispose();
     t.line.geometry = new THREE.BufferGeometry();
